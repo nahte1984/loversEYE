@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pure Particles - Camera Nebula</title>
+    <title>v1.1 stardust</title>
     <style>
         body, html {
             margin: 0;
@@ -31,34 +31,29 @@
             z-index: 10;
         }
     </style>
-    <!-- 引入 Three.js 核心庫 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 </head>
 <body>
 
-    <div id="loading">請允許相機權限以啟動純黑粒子星雲...</div>
+    <div id="loading">請允許相機權限以啟動記憶記憶粒子星雲...</div>
     <canvas id="canvas"></canvas>
 
-    <!-- Fragment Shader (片段著色器) -->
+    <!-- Shader 1: 核心運算 Shader (負責渲染當下的純黑粒子) -->
     <script id="fragmentShader" type="x-shader/x-fragment">
         uniform vec2 iResolution;
         uniform float iTime;
-        uniform sampler2D iChannel0; // 相機紋理輸入
+        uniform sampler2D iChannel0; // 相機輸入
 
         void main() {
             vec2 fragCoord = gl_FragCoord.xy;
-
-            // 控制飛船前進與動態速度
             float time = (iTime + 100.0) * 25.0;
             float s = 0.0;
             
-            // 兩組 UV
             vec2 origUV = fragCoord / iResolution.xy; 
-            origUV.x = 1.0 - origUV.x; // 鏡像修正，讓互動更直覺
+            origUV.x = 1.0 - origUV.x; // 鏡像
             
             vec2 uv = (-iResolution.xy + 2.0 * fragCoord ) / iResolution.y;
 
-            // 空間旋轉動態
             float t = time * 0.005;
             float si = sin(t * 1.5);
             float co = cos(t);
@@ -67,143 +62,186 @@
             vec3 col = vec3(0.0);
             vec3 init = vec3(0.25, 0.25, time * 0.001);
 
-            // 射線步進循環
             for (int r = 0; r < 60; r++) {
                 vec3 p = init + s * vec3(uv, 0.15);
-                p.z = mod(p.z, 2.0); // 空間重覆週期
+                p.z = mod(p.z, 2.0);
                 
-                // Kali Loop 幾何扭曲
                 for (int i = 0; i < 10; i++) {
                     p = abs(p * 2.04) / dot(p, p) - 0.75;
                 }
                 
-                // 【純黑核心修改】：調整粒子稀疏度
                 float scarcity = 0.4; 
                 float energy = length(p) * scarcity;
+                energy = pow(energy, 3.5); // 更激進的方次，讓粒子更破碎、邊緣更極端
                 
-                // 使用高次方（2.5次方）壓低暗部雜訊，讓粒子與背景的黑白對比極其強烈
-                energy = pow(energy, 2.5); 
-                
-                // 遠景淡出，避免遠處細碎粒子造成畫面雜亂
                 float fade = smoothstep(0.0, 0.5, 1.0 - s);
-                
-                // 採樣相機顏色
                 vec3 camCol = texture2D(iChannel0, origUV).rgb;
                 
-                // 累積顏色（只有當 energy > 0 時，相機顏色才會被渲染出來）
-                col += camCol * energy * fade * 0.012;
+                col += camCol * energy * fade * 0.015;
                 s += 0.015;
             }
 
-            // 稍微做一點亮度對比修正
             col = pow(col, vec3(0.9));
-            
-            // 這裡完全移除了 bgCam 底色，確保沒粒子的地方就是純黑
             gl_FragColor = vec4(col, 1.0);
         }
     </script>
 
-    <!-- Vertex Shader (頂點著色器) -->
+    <!-- Shader 2: 記憶混合 Shader (負責把「這一幀」和「過去累積的畫面」縫合在一起) -->
+    <script id="feedbackFragmentShader" type="x-shader/x-fragment">
+        uniform vec2 iResolution;
+        uniform sampler2D textureCurrent; // 當前幀的純粒子
+        uniform sampler2D textureDelay;   // 上一幀留下來的記憶
+        
+        void main() {
+            vec2 uv = gl_FragCoord.xy / iResolution.xy;
+            
+            vec3 current = texture2D(textureCurrent, uv).rgb;
+            vec3 delay = texture2D(textureDelay, uv).rgb;
+            
+            // 【核心演算法】：
+            // 如果當前幀有粒子亮起 (current 長度大於 0)
+            // 我們就「蓋上」新顏色；如果當前幀是黑的，我們就「保留」舊的記憶
+            vec3 finalCol;
+            if (length(current) > 0.1) {
+                // 當粒子撞擊時，融合新舊顏色，並牢牢鎖定
+                finalCol = max(current, delay);
+            } else {
+                // 當粒子離開後，顏色定格在原地！
+                // 這裡乘以 0.998 可以讓它有極度緩慢的淡出感，製造史詩級的靈魂殘留
+                // 如果想要永遠完全不消失，可以改成 1.0
+                finalCol = delay * 0.998; 
+            }
+            
+            gl_FragColor = vec4(finalCol, 1.0);
+        }
+    </script>
+
     <script id="vertexShader" type="x-shader/x-vertex">
         void main() {
             gl_Position = vec4(position, 1.0);
         }
     </script>
 
-    <!-- 主程式邏輯 -->
+    <!-- 主程式：配置 Ping-Pong Buffer 記憶鏈 -->
     <script>
-        let scene, camera, renderer, material, mesh;
+        let scene, camera, renderer;
         let video, videoTexture;
-        let uniforms;
-
+        let clock = new THREE.Clock();
+        
+        // 用於生成粒子的舞台
+        let baseMaterial, baseMesh, baseScene;
+        // 用於混合記憶的舞台
+        let blendMaterial, blendMesh, blendScene;
+        // 兩個渲染緩衝區（輪流當作「過去的記憶」與「現在的畫布」）
+        let rtA, rtB;
+        
+        let uniformsBase, uniformsBlend;
         const loadingEl = document.getElementById('loading');
 
-        // 1. 取得相機權限與視訊串流
         async function setupCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 loadingEl.innerText = "你的瀏覽器不支援相機功能";
                 return null;
             }
-
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: { width: 640, height: 480, facingMode: "user" },
                     audio: false
                 });
-                
                 video = document.createElement('video');
                 video.srcObject = stream;
                 video.autoplay = true;
                 video.playsInline = true;
-                
                 return new Promise((resolve) => {
-                    video.onloadedmetadata = () => {
-                        video.play();
-                        resolve(video);
-                    };
+                    video.onloadedmetadata = () => { video.play(); resolve(video); };
                 });
             } catch (err) {
-                console.error(err);
                 loadingEl.innerText = "無法取得相機權限：" + err.message;
                 return null;
             }
         }
 
-        // 2. 初始化 WebGL 舞台
         function initWebGL(videoElement) {
             const canvas = document.getElementById('canvas');
-            
-            scene = new THREE.Scene();
-            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
             
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-
-            // 將相機視訊轉為 Three.js 紋理
+            renderer.setSize(w, h);
+            
+            camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             videoTexture = new THREE.VideoTexture(videoElement);
-            videoTexture.minFilter = THREE.LinearFilter;
-            videoTexture.magFilter = THREE.LinearFilter;
 
-            // 傳遞給 Shader 的 Uniform 變數
-            uniforms = {
+            // 建立雙緩衝區 (Ping-Pong Targets)
+            rtA = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+            rtB = new THREE.WebGLRenderTarget(w, h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter });
+
+            // 1. 設定基礎粒子場景
+            baseScene = new THREE.Scene();
+            uniformsBase = {
                 iTime: { value: 0 },
-                iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+                iResolution: { value: new THREE.Vector2(w, h) },
                 iChannel0: { value: videoTexture }
             };
-
-            // 建立 Shader 材質
-            material = new THREE.ShaderMaterial({
+            baseMaterial = new THREE.ShaderMaterial({
                 vertexShader: document.getElementById('vertexShader').textContent,
                 fragmentShader: document.getElementById('fragmentShader').textContent,
-                uniforms: uniforms
+                uniforms: uniformsBase
             });
+            baseMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), baseMaterial);
+            baseScene.add(baseMesh);
 
-            // 建立鋪滿螢幕的網格並加入場景
-            const geometry = new THREE.PlaneGeometry(2, 2);
-            mesh = new THREE.Mesh(geometry, material);
-            scene.add(mesh);
+            // 2. 設定記憶混合場景
+            blendScene = new THREE.Scene();
+            uniformsBlend = {
+                iResolution: { value: new THREE.Vector2(w, h) },
+                textureCurrent: { value: null },
+                textureDelay: { value: null }
+            };
+            blendMaterial = new THREE.ShaderMaterial({
+                vertexShader: document.getElementById('vertexShader').textContent,
+                fragmentShader: document.getElementById('feedbackShader' ? null : 'feedbackFragmentShader').textContent,
+                uniforms: uniformsBlend
+            });
+            blendMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), blendMaterial);
+            blendScene.add(blendMesh);
 
-            // 順利啟動後隱藏 Loading 提示
             loadingEl.style.opacity = 0;
-
             window.addEventListener('resize', onWindowResize);
         }
 
         function onWindowResize() {
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            renderer.setSize(w, h);
+            rtA.setSize(w, h);
+            rtB.setSize(w, h);
+            uniformsBase.iResolution.value.set(w, h);
+            uniformsBlend.iResolution.value.set(w, h);
         }
-
-        // 3. 主渲染循環
-        const clock = new THREE.Clock();
 
         function animate() {
             requestAnimationFrame(animate);
-            uniforms.iTime.value = clock.getElapsedTime();
-            renderer.render(scene, camera);
+            
+            // A. 渲染當前時間點的純黑背景粒子，隱藏渲染到 rtA
+            uniformsBase.iTime.value = clock.getElapsedTime();
+            renderer.setRenderTarget(rtA);
+            renderer.render(baseScene, camera);
+            
+            // B. 把當前粒子(rtA)與上一幀的記憶(rtB)丟進混合 Shader，運算結果輸出到主畫布上
+            uniformsBlend.textureCurrent.value = rtA.texture;
+            uniformsBlend.textureDelay.value = rtB.texture;
+            
+            // 這次真正渲染到螢幕上給人看
+            renderer.setRenderTarget(null);
+            renderer.render(blendScene, camera);
+            
+            // C. 【關鍵 Ping-Pong】把當前螢幕上這張完美的、混合好的畫作，複製一份丟回 rtB 存起來，當作下一幀的「過去記憶」
+            renderer.setRenderTarget(rtB);
+            renderer.render(blendScene, camera);
+            renderer.setRenderTarget(null);
         }
 
-        // 程式主入口
         async function main() {
             const videoElement = await setupCamera();
             if (videoElement) {
@@ -211,7 +249,6 @@
                 animate();
             }
         }
-
         main();
     </script>
 </body>
