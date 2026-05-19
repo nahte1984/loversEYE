@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>v2.0 stardust</title>
+    <title>v2.1 stardust</title>
     <style>
         body, html {
             margin: 0;
@@ -35,25 +35,25 @@
 </head>
 <body>
 
-    <div id="loading">正在建構斷層記憶記憶體...</div>
+    <div id="loading">正在建構平衡記憶體...</div>
     <canvas id="canvas"></canvas>
 
-    <!-- Shader 1: 核心記憶烙印 Shader (只在粒子通過時才准相機進來，否則保留舊記憶) -->
+    <!-- Shader 1: 核心記憶烙印與衰減 Shader -->
     <script id="fragmentShader" type="x-shader/x-fragment">
         uniform vec2 iResolution;
         uniform float iTime;
         uniform sampler2D iChannel0;    // 即時相機輸入
-        uniform sampler2D textureDelay; // 歷史記憶 Buffer (上一影格)
+        uniform sampler2D textureDelay; // 歷史記憶 Buffer
 
         void main() {
             vec2 fragCoord = gl_FragCoord.xy;
             vec2 origUV = fragCoord / iResolution.xy; 
             
-            // 讀取上一影格留在這裡的永恆顏色
+            // 讀取上一影格留在這裡的顏色
             vec3 lastMemory = texture2D(textureDelay, origUV).rgb;
 
-            // 算當下的 Kali Loop 粒子結構
-            float time = (iTime + 100.0) * 20.0; // 前進速度
+            // 計算當下的 Kali Loop 粒子結構
+            float time = (iTime + 100.0) * 20.0; 
             float s = 0.0;
             
             vec2 camUV = origUV;
@@ -78,7 +78,8 @@
                 
                 float scarcity = 0.4; 
                 float energy = length(p) * scarcity;
-                energy = pow(energy, 4.0); // 這裡極其暴力，只有核心極亮的粒子會過關
+                // 提高到 5.0 次方！讓粒子線條變得極其細緻、稀疏
+                energy = pow(energy, 5.0); 
                 
                 float fade = smoothstep(0.0, 0.5, 1.0 - s);
                 vec3 camCol = texture2D(iChannel0, camUV).rgb;
@@ -88,24 +89,26 @@
             }
             currentParticle = pow(currentParticle, vec3(0.9));
 
-            // 【核心機制：斷開即時訊號】
-            // 如果當前這個像素位置，Kali 粒子算出來有亮光 (也就是 currentParticle 有值)
-            // 我們才把新顏色「印」到記憶體上；如果此時沒有粒子經過，那對不起，這裡永遠維持上一影格的舊記憶！
+            // 【新陳代謝核心機制】
             vec3 finalLog;
-            if (length(currentParticle) > 0.15) {
-                // 當粒子撞擊，蓋上最新的顏色，並跟過去的記憶做最大值融合
-                finalLog = max(currentParticle, lastMemory);
+            if (length(currentParticle) > 0.3) { 
+                // 當前有強烈粒子撞擊時，印上新顏色。
+                // 舊記憶乘以 0.95，確保新顏色能覆蓋舊顏色，不會無限疊加到爆白
+                finalLog = max(currentParticle, lastMemory * 0.95);
             } else {
-                // 粒子沒有經過的地方，直接鎖死舊記憶，相機怎麼動都動不到這裡！
-                // 乘以 0.999 讓它有極度緩慢、幾乎看不出來的灰飛煙滅感（沙畫感）
-                finalLog = lastMemory * 0.999;
+                // 【關鍵微調】：粒子沒經過時，讓舊記憶以 0.965 的速度衰減
+                // 這會讓定格的彩色粒子大約在 2~3 秒內緩慢風化消失，永遠保持畫面有黑有亮
+                finalLog = lastMemory * 0.965;
             }
+            
+            // 擋掉極度微小的雜訊，確保背景是純黑
+            if(length(finalLog) < 0.01) finalLog = vec3(0.0);
             
             gl_FragColor = vec4(finalLog, 1.0);
         }
     </script>
 
-    <!-- Shader 2: 純輸出 Shader (只負責把記憶畫布輸出到螢幕上，不參與任何計算) -->
+    <!-- Shader 2: 純輸出 Shader -->
     <script id="displayFragmentShader" type="x-shader/x-fragment">
         uniform vec2 iResolution;
         uniform sampler2D textureMemory;
@@ -128,7 +131,7 @@
         
         let calcScene, calcMaterial;
         let dispScene, dispMaterial;
-        let rtA, rtB; // Ping-Pong 核心記憶庫
+        let rtA, rtB;
         
         let uniformsCalc, uniformsDisp;
         const loadingEl = document.getElementById('loading');
@@ -169,17 +172,15 @@
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             videoTexture = new THREE.VideoTexture(videoElement);
 
-            // 建立高精度的雙緩衝記憶庫
             rtA = new THREE.WebGLRenderTarget(w, h);
             rtB = new THREE.WebGLRenderTarget(w, h);
 
-            // 舞台 1: 記憶烙印與運算
             calcScene = new THREE.Scene();
             uniformsCalc = {
                 iTime: { value: 0 },
                 iResolution: { value: new THREE.Vector2(w, h) },
                 iChannel0: { value: videoTexture },
-                textureDelay: { value: null } // 讀取上一幀
+                textureDelay: { value: null }
             };
             calcMaterial = new THREE.ShaderMaterial({
                 vertexShader: document.getElementById('vertexShader').textContent,
@@ -189,7 +190,6 @@
             const calcMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), calcMaterial);
             calcScene.add(calcMesh);
 
-            // 舞台 2: 純顯示
             dispScene = new THREE.Scene();
             uniformsDisp = {
                 iResolution: { value: new THREE.Vector2(w, h) },
@@ -224,19 +224,14 @@
             
             uniformsCalc.iTime.value = clock.getElapsedTime();
             
-            // 【硬派 Ping-Pong 管線】
-            // 1. 把「上一幀的歷史記憶 rtB」餵給運算 Shader，結合「新相機訊號」，把結果畫進「新記憶 rtA」裡
             uniformsCalc.textureDelay.value = rtB.texture;
             renderer.setRenderTarget(rtA);
             renderer.render(calcScene, camera);
             
-            // 2. 把剛剛算好、新鮮熱騰騰的記憶 rtA，拿給顯示舞台，真正輸出到螢幕上給你看
             uniformsDisp.textureMemory.value = rtA.texture;
             renderer.setRenderTarget(null);
             renderer.render(dispScene, camera);
             
-            // 3. 【關鍵置換】把 rtA 複製給 rtB，讓 rtB 成為下一影格的歷史。
-            // 這樣記憶就徹底與這影格的即時相機訊號切斷了！
             let temp = rtA;
             rtA = rtB;
             rtB = temp;
