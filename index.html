@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v4.0 (Galaxy Eyes Edition)</title>
+    <title>whenever i see u | v4.1 (Asymmetric Galaxy Eyes)</title>
     <style>
         body {
             margin: 0;
@@ -97,31 +97,32 @@
                                       dot( hash( i + vec3(1.0,1.0,1.0) ), f - vec3(1.0,1.0,1.0) ), u.x), u.y), u.z );
             }
 
-            // --- 眼睛噴發星系的函數 (Star Nest Fractal) ---
-            vec3 renderGalaxy(vec2 uv, vec2 center) {
+            // --- 眼睛噴發星系的函數 (加入了時間差與旋轉方向參數) ---
+            vec3 renderGalaxy(vec2 uv, vec2 center, float timeOffset, float swirlDir) {
                 // 1. 測量距離，如果離眼睛太遠就直接跳過 (極度提升 GPU 效能)
                 float dist = length(uv - center);
-                float maxRadius = 0.35; // 星系噴發的半徑範圍
+                float maxRadius = 0.35; 
                 
                 if (dist > maxRadius) return vec3(0.0);
 
                 // 2. 將座標系統重置到以「眼睛」為中心，並放大縮放比例
                 vec2 local_uv = (uv - center) * 4.0; 
                 
-                float time = (iTime + 29.0) * 60.0;
+                // 加入 timeOffset 創造兩隻眼睛的相位差
+                float time = (iTime + 29.0 + timeOffset) * 60.0;
                 float s = 0.0, v = 0.0;
                 float t = time * 0.005;
                 
-                // 模擬星雲的扭曲旋轉
+                // 模擬星雲的扭曲旋轉，加入 swirlDir (1.0 順時針, -1.0 逆時針)
                 local_uv.x += sin(t) * 0.3;
-                float si = sin(t * 1.5);
+                float si = sin(t * 1.5) * swirlDir; 
                 float co = cos(t);
                 local_uv *= mat2(co, si, -si, co);
                 
                 vec3 col = vec3(0.0);
                 vec3 init = vec3(0.25, 0.25 + sin(time * 0.001) * 0.1, time * 0.0008);
                 
-                // 核心碎形演算法 (迴圈次數稍微調降以確保行動裝置 60fps，畫質依舊絢麗)
+                // 核心碎形演算法
                 for (int r = 0; r < 70; r++) { 
                     vec3 p = init + s * vec3(local_uv, 0.143);
                     p.z = mod(p.z, 2.0);
@@ -172,7 +173,7 @@
                 vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
                 vec3 cameraCol = texture2D(u_cameraTexture, lookupUv).rgb;
                 
-                // 將相機畫面微壓暗 (約 1.5EV / 0.55 倍) 以突顯星空
+                // 將相機畫面微壓暗
                 cameraCol *= 0.55;
                 
                 // --- 2. 融入背景點綴星空 ---
@@ -197,8 +198,10 @@
                 
                 vec3 eyeGalaxyFX = vec3(0.0);
                 if (u_hasFace > 0.5) {
-                    eyeGalaxyFX += renderGalaxy(uv, leftEye);
-                    eyeGalaxyFX += renderGalaxy(uv, rightEye);
+                    // 左眼：原時間軸，正向旋轉
+                    eyeGalaxyFX += renderGalaxy(uv, leftEye, 0.0, 1.0);
+                    // 右眼：時間快轉 50 秒，反向旋轉
+                    eyeGalaxyFX += renderGalaxy(uv, rightEye, 50.0, -1.0);
                 }
                 
                 // 將星系特效以發光(Additive)模式疊加上去
