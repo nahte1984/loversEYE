@@ -28,14 +28,10 @@
 
         #webcam {
             position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            object-fit: cover;
-            z-index: 1;
-            transform: scaleX(-1);
-            display: none; /* 完全由 WebGL 渲染，確保底圖與特效同步缩放 */
+            width: 1px;
+            height: 1px;
+            opacity: 0;
+            pointer-events: none;
         }
     </style>
 
@@ -53,13 +49,11 @@
         const canvasElement = document.getElementById('webgl-canvas');
 
         let renderer, scene, camera, material, mesh, cameraTexture;
-        let leftEyePos = new THREE.Vector2(-999.0, -999.0);
-        let rightEyePos = new THREE.Vector2(-999.0, -999.0);
+        
+        // 直接傳遞 MediaPipe 的原始 0~1 座標
+        let leftEyeRaw = new THREE.Vector2(0.5, 0.5);
+        let rightEyeRaw = new THREE.Vector2(0.5, 0.5);
         let hasFace = false;
-
-        // 相機捕捉的原始解析度，稍後會動態更新
-        let videoWidth = 1280;
-        let videoHeight = 720;
 
         const vertexShader = `
             varying vec2 vUv;
@@ -74,8 +68,8 @@
             uniform vec2 iResolution;
             uniform vec2 u_videoResolution;
             uniform float iTime;
-            uniform vec2 u_leftEye;   
-            uniform vec2 u_rightEye;  
+            uniform vec2 u_leftEyeRaw;   // MediaPipe 原始 0~1 座標 (X: 0=左, 1=右; Y: 0=上, 1=下)
+            uniform vec2 u_rightEyeRaw;  
             uniform float u_hasFace;  
             varying vec2 vUv;
 
@@ -108,7 +102,7 @@
                     float pt = 1.-pow(t-1., 2.);
                     
                     vec2 startP = p - vec2(0., pt*pt*.02); 
-                    vec2 endP = startP + normalize(n.xy)*n.z*0.15; 
+                    vec2 endP = startP + normalize(n.xy)*n.z*0.14; 
                     vec2 pos = mix(p, endP, pt);    
                     
                     float size = mix(.00008, .00002, S(0., .1, pt));
@@ -130,33 +124,58 @@
                 return c;
             }
 
-            void main() {
-                // --- 修正底圖的 Object-Fit: Cover 裁切邏輯 ---
-                vec2 screenUV = gl_FragCoord.xy / iResolution.xy;
+            // 核心對位函數：將相機 0~1 座標轉換為與背景完全一致的 WebGL 空間座標
+            vec2 transformCoordinates(vec2 rawCoord, float screenAspect, float videoAspect) {
+                // 1. 將 Y 軸反轉 (MediaPipe 0 在上，WebGL 0 在下)
+                vec2 uv = vec2(rawCoord.x, 1.0 - rawCoord.y);
                 
+                // 2. 模擬物體全螢幕覆蓋 (Object-fit: Cover) 的幾何裁切計算
+                if (screenAspect < videoAspect) {
+                    float scale = screenAspect / videoAspect;
+                    uv.x = (uv.x - 0.5) * scale + 0.5;
+                } else {
+                    float scale = videoAspect / screenAspect;
+                    uv.y = (uv.y - 0.5) * scale + 0.5;
+                }
+                
+                // 3. 轉換到 Shader 特效使用的中心化座標系 (-Aspect/2 ~ +Aspect/2)
+                uv.x -= 0.5;
+                uv.x *= screenAspect;
+                uv.y -= 0.5;
+                
+                return uv;
+            }
+
+            void main() {
                 float screenAspect = iResolution.x / iResolution.y;
                 float videoAspect = u_videoResolution.x / u_videoResolution.y;
                 
+                // --- 1. 計算相機背景紋理 Uv 座標 ---
                 vec2 camUv = vUv;
                 if (screenAspect < videoAspect) {
-                    // 螢幕比相機窄 (例如手機直向螢幕)
                     float scale = screenAspect / videoAspect;
                     camUv.x = (vUv.x - 0.5) * scale + 0.5;
                 } else {
-                    // 螢幕比相機寬
                     float scale = videoAspect / screenAspect;
                     camUv.y = (vUv.y - 0.5) * scale + 0.5;
                 }
                 
-                // 修正鏡像
-                camUv.x = 1.0 - camUv.x;
-                vec3 cameraCol = texture2D(u_cameraTexture, camUv).rgb;
+                // 鏡像翻轉（讓自拍像照鏡子）
+                vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
+                vec3 cameraCol = texture2D(u_cameraTexture, lookupUv).rgb;
                 
-                // --- Shader 粒子座標系統 ---
-                vec2 uv = screenUV;
+                // --- 2. 計算目前像素在 Shader 特效中的座標 ---
+                vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
+                uv.y -= 0.5;
                 
+                // --- 3. 將 JavaScript 傳進來的眼睛座標進行完全相同的空間轉換 ---
+                // 注意：因為 MediaPipe 影像在鏡像前傳出，所以我們傳入 X 軸時先取反轉 (1.0 - x)
+                vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
+                vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
+                
+                // --- 4. 施放煙火 ---
                 float t = iTime * 1.2; 
                 vec3 fireworkCol = vec3(0.);
                 
@@ -166,7 +185,7 @@
                         float id = floor(et);
                         et -= id;
                         
-                        vec2 targetEye = (mod(i, 2.0) < 1.0) ? u_leftEye : u_rightEye;
+                        vec2 targetEye = (mod(i, 2.0) < 1.0) ? leftEye : rightEye;
                         vec3 offset = hash31(id) - 0.5;
                         vec2 p = targetEye + offset.xy * 0.015; 
                         
@@ -177,7 +196,7 @@
                 fireworkCol = Rainbow(fireworkCol);
                 fireworkCol = clamp(fireworkCol, 0.0, 1.0);
                 
-                // Alpha 覆蓋混合，不產生光害過曝
+                // 乾淨分明的遮罩混合
                 vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
                 
                 gl_FragColor = vec4(finalCol, 1.0);
@@ -201,10 +220,10 @@
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
-                u_videoResolution: { value: new THREE.Vector2(videoWidth, videoHeight) },
+                u_videoResolution: { value: new THREE.Vector2(1280, 720) }, // 預設值，啟動後會自動覆蓋
                 iTime: { value: 0 },
-                u_leftEye: { value: leftEyePos },
-                u_rightEye: { value: rightEyePos },
+                u_leftEyeRaw: { value: leftEyeRaw },
+                u_rightEyeRaw: { value: rightEyeRaw },
                 u_hasFace: { value: 0.0 }
             };
 
@@ -232,15 +251,19 @@
         function animate(timestamp) {
             requestAnimationFrame(animate);
             material.uniforms.iTime.value = timestamp / 1000.0;
-            material.uniforms.u_leftEye.value.copy(leftEyePos);
-            material.uniforms.u_rightEye.value.copy(rightEyePos);
+            material.uniforms.u_leftEyeRaw.value.copy(leftEyeRaw);
+            material.uniforms.u_rightEyeRaw.value.copy(rightEyeRaw);
             material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
-            material.uniforms.u_videoResolution.value.set(videoWidth, videoHeight);
+            
+            if (videoElement.videoWidth) {
+                // 動態將相機最精確的硬體解析度送進 GPU
+                material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
+            }
 
             renderer.render(scene, camera);
         }
 
-        // --- 精確演算法：同步模擬 CSS Object-Fit: Cover 的座標轉換 ---
+        // --- 核心：純粹抓取原始 0~1 的眼睛數據 ---
         const faceMesh = new FaceMesh({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
@@ -257,42 +280,13 @@
                 hasFace = true;
                 const landmarks = results.multiFaceLandmarks[0];
 
+                // 468和473是 MediaPipe 中極度精準的左、右眼球瞳孔中心點
                 const leftEye = landmarks[468];
                 const rightEye = landmarks[473];
 
-                const screenWidth = window.innerWidth;
-                const screenHeight = window.innerHeight;
-                
-                // 1. 計算視訊與螢幕的縮放比例 (模擬 object-fit: cover)
-                const scaleX = screenWidth / videoWidth;
-                const scaleY = screenHeight / videoHeight;
-                const renderScale = Math.max(scaleX, scaleY);
-
-                // 2. 計算視訊被放大後的實際渲染尺寸
-                const vRenderWidth = videoWidth * renderScale;
-                const vRenderHeight = videoHeight * renderScale;
-
-                // 3. 計算因為置中對齊產生的裁切偏移量量 (Pixels)
-                const offsetX = (vRenderWidth - screenWidth) / 2;
-                const offsetY = (vRenderHeight - screenHeight) / 2;
-
-                // 4. 將 MediaPipe 的 0~1 轉換成「放大後的視訊絕對像素座標」
-                // 注意：因為 MediaPipe 拿到的視訊通常是橫向的（1280x720），手機直持時會自動旋轉，所以它的 x, y 要對應好
-                const lxPix = (1.0 - leftEye.x) * vRenderWidth - offsetX;
-                const lyPix = leftEye.y * vRenderHeight - offsetY;
-
-                const rxPix = (1.0 - rightEye.x) * vRenderWidth - offsetX;
-                const ryPix = rightEye.y * vRenderHeight - offsetY;
-
-                // 5. 將像素座標完美對齊到 WebGL Shader 的 UV 座標系統內 (-Aspect/2 ~ +Aspect/2)
-                const screenAspect = screenWidth / screenHeight;
-
-                leftEyePos.x = (lxPix / screenWidth - 0.5) * screenAspect;
-                leftEyePos.y = 0.5 - (lyPix / screenHeight);
-
-                rightEyePos.x = (rxPix / screenWidth - 0.5) * screenAspect;
-                rightEyePos.y = 0.5 - (ryPix / screenHeight);
-
+                // 完全不做任何前端數學運算，直接拋給 Shader
+                leftEyeRaw.set(leftEye.x, leftEye.y);
+                rightEyeRaw.set(rightEye.x, rightEye.y);
             } else {
                 hasFace = false;
             }
@@ -300,11 +294,6 @@
 
         const cameraUtils = new Camera(videoElement, {
             onFrame: async () => {
-                // 當相機成功啟動後，獲取實際輸出的解析度（通常為 1280x720 或手機直向時的 720x1280）
-                if (videoElement.videoWidth && videoElement.videoWidth !== videoWidth) {
-                    videoWidth = videoElement.videoWidth;
-                    videoHeight = videoElement.videoHeight;
-                }
                 await faceMesh.send({ image: videoElement });
             },
             width: 1280,
@@ -314,7 +303,7 @@
         window.addEventListener('load', () => {
             initWebGL();
             cameraUtils.start().catch(err => {
-                console.error("無法啟動相機：", err);
+                console.error("相機啟動失敗：", err);
             });
         });
     </script>
