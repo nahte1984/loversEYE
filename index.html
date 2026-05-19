@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動眼睛煙火特效 - 星空閃爍大禮花版</title>
+    <title>whenever i see u | v3.1</title>
     <style>
         body {
             margin: 0;
@@ -91,7 +91,7 @@
                return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
             }
 
-            // --- 星空的雜訊與隨機函數 (移除 f 結尾防止 WebGL 報錯) ---
+            // --- 星空的雜訊與隨機函數 ---
             vec3 hash( vec3 p ) {
                 p = vec3( dot(p,vec3(127.1,311.7, 74.7)),
                           dot(p,vec3(269.5,183.3,246.1)),
@@ -128,7 +128,6 @@
                     vec3 n = hash31(i)-.5;
                     float pt = 1.0 - pow(t - 1.0, 2.0);
                     
-                    // 修正 1：範圍加倍 (從 0.35 擴大為 0.70)
                     vec2 startP = p - vec2(0., pt * pt * 0.04); 
                     vec2 endP = startP + normalize(n.xy) * n.z * 0.70; 
                     vec2 pos = mix(p, endP, pt);    
@@ -184,21 +183,20 @@
                 vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
                 vec3 cameraCol = texture2D(u_cameraTexture, lookupUv).rgb;
                 
-                // 壓暗相機畫面 (-2EV)
-                cameraCol *= 0.25;
+                // [修改 1] 將相機畫面調亮 (約 -0.5EV) -> 從 0.25 提高到 0.70
+                cameraCol *= 0.55;
                 
                 // --- 2. 融入背景星空 ---
                 vec2 starUv = gl_FragCoord.xy / iResolution.xy;
-                // 利用 screenAspect 修正星空比例，確保星星不會被拉長
                 vec3 stars_direction = normalize(vec3((starUv * 2.0 - 1.0) * vec2(screenAspect, 1.0), 1.0)); 
-                float stars_threshold = 8.0; 
-                float stars_exposure = 200.0; 
                 
-                // 產生星星並加上時間閃爍效果
+                // [修改 2] 星空數量減半 (門檻 8.0 -> 15.0)，星空亮度減半 (曝光 200.0 -> 100.0)
+                float stars_threshold = 15.0; 
+                float stars_exposure = 100.0; 
+                
                 float stars = pow(clamp(noise(stars_direction * 200.0), 0.0, 1.0), stars_threshold) * stars_exposure;
                 stars *= mix(0.4, 1.4, noise(stars_direction * 100.0 + vec3(iTime)));
                 
-                // 將星星以加法混合疊加，去除原本的黑背景
                 cameraCol = clamp(cameraCol + vec3(stars), 0.0, 1.0);
 
                 // --- 3. 煙火處理 ---
@@ -210,7 +208,7 @@
                 vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
                 vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
                 
-                float t = iTime * 0.5; // 維持拉長的生命週期
+                float t = iTime * 0.5; 
                 vec3 fireworkCol = vec3(0.);
                 
                 if (u_hasFace > 0.5) {
