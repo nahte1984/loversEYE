@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v6.0 (Heart Fireworks Eyes)</title>
+    <title>whenever i see u | v6.1 (Bigger & Slower Hearts)</title>
     <style>
         body {
             margin: 0;
@@ -131,55 +131,49 @@
 
             // --- 繪製愛心煙火 ---
             vec3 renderHeartFireworks(vec2 scaled_uv, vec2 center, float timeOffset) {
-                float t = (iTime * 0.7) + timeOffset; // 調整煙火播放速度
+                // [修改1] 降低時間流逝速度 (從 0.7 降至 0.35) 讓生命週期變長，發射頻率也變低
+                float t = (iTime * 0.35) + timeOffset; 
                 vec3 color = vec3(0.);
                 
-                // jmax 為煙火重疊綻放的數量，imax 為每朵煙火的五角星數量
-                const float jmax = 6.0; 
+                // [修改2] 減少煙火重疊的層數 (從 6.0 降至 3.0) 讓畫面更乾淨
+                const float jmax = 3.0; 
                 const float imax = 20.0; 
                 
-                // 效能優化：如果距離眼睛太遠，不執行運算
+                // 放寬可視半徑範圍以容納更大的愛心
                 float dist = length(scaled_uv - center);
-                if(dist > 1.2) return vec3(0.0);
+                if(dist > 1.8) return vec3(0.0);
 
                 for(float j=0.; j<jmax; j++){
                     float ja = j/jmax;
-                    float local_t = t - hash1(ja*33.669) * 2.0; // 錯開每朵煙火的時間
+                    float local_t = t - hash1(ja*33.669) * 2.0; 
                     float t1 = floor(local_t); 
-                    
-                    // 移除上升階段，直接讓 t2fb 等於 0~1 的小數部分，從中心原地爆炸
                     float t2fb = fract(local_t); 
                     
-                    // 爆炸瞬間的閃光 (0.0~0.1階段發光)
                     float flasht = t2fb * (step(0.0, t2fb) - step(0.1, t2fb)) * 10.;
                     
-                    // 為每朵煙火決定彩帶顏色
                     vec3 col = colorRibbon(hash1(ja + t1)); 
                     
                     for(float i=0.; i<imax; i++){ 
                         float ia = i/imax;
                         
-                        // 取得愛心路徑座標，加上微小的隨機偏移讓星星不那麼死板
                         float randOffset = (hash1(ia + t1) - 0.5) * 0.2;
-                        vec2 heartOffset = getHeartPosition(ia * TWO_PI + randOffset) * t2fb * -0.022; 
                         
-                        // 星星座標定錨在眼睛中心
+                        // [修改3] 放大愛心的尺寸 (倍率從 -0.022 擴大為 -0.045)
+                        vec2 heartOffset = getHeartPosition(ia * TWO_PI + randOffset) * t2fb * -0.045; 
+                        
                         vec2 layer2_pos = center + heartOffset;
                         
-                        // 加上些微的物理重力下墜
-                        layer2_pos.y -= t2fb * t2fb * 0.2;
+                        // [修改4] 完全移除地心引力，讓愛心純粹向外擴散不往下掉
+                        // layer2_pos.y -= t2fb * t2fb * 0.2; // 這行被移除了
                         
-                        // 星星閃爍效果
                         float blink = step(1., mod(i, 2.)); 
                         
-                        // 繪製五角星 SDF (把坐標距離放大1.5倍，讓星星變精緻一點)
-                        float sdf = star5SDF((scaled_uv - layer2_pos) * 1.5, 0.05, 0.09) + 0.05;
+                        // 稍微放大五角星以適應更大的愛心
+                        float sdf = star5SDF((scaled_uv - layer2_pos) * 1.2, 0.05, 0.09) + 0.05;
                         
-                        // 後期淡出
                         float fade = 1.0 - pow(t2fb, 2.0); 
                         
-                        // 疊加顏色發光
-                        color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.015/sdf)) * fade;
+                        color += col * smoothstep(-0.016, flasht*3.6+4.5+ sin(t2fb*30.)*blink, (0.018/sdf)) * fade;
                     }
                 }
                 return color;
@@ -266,12 +260,10 @@
                 
                 vec3 eyeFX = vec3(0.0);
                 if (u_hasFace > 0.5) {
-                    // 加上時間差，讓兩隻眼睛的煙火不會完美重疊，更有層次感
                     eyeFX += renderHeartFireworks(scaled_uv, scaled_leftEye, 0.0);
                     eyeFX += renderHeartFireworks(scaled_uv, scaled_rightEye, 0.5);
                 }
                 
-                // 疊加愛心煙火發光
                 finalCol = clamp(finalCol + eyeFX, 0.0, 1.0);
                 
                 // --- 4. 畫面暗角 (Vignette) ---
