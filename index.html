@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動眼睛煙火特效 - 完美對位版</title>
+    <title>互動眼睛煙火特效 - 大禮花暗底版</title>
     <style>
         body {
             margin: 0;
@@ -50,10 +50,12 @@
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
-        // 直接傳遞 MediaPipe 的原始 0~1 座標
         let leftEyeRaw = new THREE.Vector2(0.5, 0.5);
         let rightEyeRaw = new THREE.Vector2(0.5, 0.5);
         let hasFace = false;
+
+        let videoWidth = 1280;
+        let videoHeight = 720;
 
         const vertexShader = `
             varying vec2 vUv;
@@ -68,7 +70,7 @@
             uniform vec2 iResolution;
             uniform vec2 u_videoResolution;
             uniform float iTime;
-            uniform vec2 u_leftEyeRaw;   // MediaPipe 原始 0~1 座標 (X: 0=左, 1=右; Y: 0=上, 1=下)
+            uniform vec2 u_leftEyeRaw;   
             uniform vec2 u_rightEyeRaw;  
             uniform float u_hasFace;  
             varying vec2 vUv;
@@ -78,7 +80,8 @@
             #define saturate(x) clamp(x,0.,1.)
 
             #define NUM_EXPLOSIONS 4.
-            #define NUM_PARTICLES 45.
+            // 稍微增加粒子數，讓擴散變廣時不會顯得太稀疏
+            #define NUM_PARTICLES 55.
 
             #define MOD3 vec3(.1031,.11369,.13787)
             vec3 hash31(float p) {
@@ -99,17 +102,23 @@
                 
                 for(float i=0.; i<NUM_PARTICLES; i++) {
                     vec3 n = hash31(i)-.5;
-                    float pt = 1.-pow(t-1., 2.);
                     
-                    vec2 startP = p - vec2(0., pt*pt*.02); 
-                    vec2 endP = startP + normalize(n.xy)*n.z*0.14; 
+                    // pt 控制爆炸進度。優化二次曲線，讓粒子在空中「留滯、減速」的時間更長
+                    float pt = 1.0 - pow(t - 1.0, 2.0);
+                    
+                    // 修正 2：加強物理下墜與大幅拉開擴散半徑（由 0.14 提高到 0.35）
+                    vec2 startP = p - vec2(0., pt * pt * 0.04); 
+                    vec2 endP = startP + normalize(n.xy) * n.z * 0.35; 
                     vec2 pos = mix(p, endP, pt);    
                     
-                    float size = mix(.00008, .00002, S(0., .1, pt));
-                    size *= S(1., .2, pt);
+                    // 讓粒子尺寸隨著擴散慢慢變小
+                    float size = mix(.00007, .00001, S(0., .1, pt));
+                    // 修改：拉長淡出的時機點，粒子生命週期後半段依然清晰可見
+                    size *= S(1.0, 0.05, pt);
                     
-                    float sparkle = (sin((pt+n.z)*80.)*.5+.5);
-                    sparkle = pow(sparkle, 10.) * 0.00002;
+                    // 閃爍特效
+                    float sparkle = (sin((pt+n.z)*60.)*.5+.5);
+                    sparkle = pow(sparkle, 10.) * 0.000015;
                     size += sparkle*B(en.x, en.y, en.z, t);
                     
                     col += baseCol * circ(uv, pos, size);
@@ -118,18 +127,14 @@
             }
 
             vec3 Rainbow(vec3 c) {
-                float t = iTime * 1.5;
+                float t = iTime * 1.2;
                 float avg = (c.r+c.g+c.b)/3.;
                 c = avg + (c-avg)*sin(vec3(0., .333, .666)+t);
                 return c;
             }
 
-            // 核心對位函數：將相機 0~1 座標轉換為與背景完全一致的 WebGL 空間座標
             vec2 transformCoordinates(vec2 rawCoord, float screenAspect, float videoAspect) {
-                // 1. 將 Y 軸反轉 (MediaPipe 0 在上，WebGL 0 在下)
                 vec2 uv = vec2(rawCoord.x, 1.0 - rawCoord.y);
-                
-                // 2. 模擬物體全螢幕覆蓋 (Object-fit: Cover) 的幾何裁切計算
                 if (screenAspect < videoAspect) {
                     float scale = screenAspect / videoAspect;
                     uv.x = (uv.x - 0.5) * scale + 0.5;
@@ -137,12 +142,9 @@
                     float scale = videoAspect / screenAspect;
                     uv.y = (uv.y - 0.5) * scale + 0.5;
                 }
-                
-                // 3. 轉換到 Shader 特效使用的中心化座標系 (-Aspect/2 ~ +Aspect/2)
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
                 uv.y -= 0.5;
-                
                 return uv;
             }
 
@@ -150,7 +152,6 @@
                 float screenAspect = iResolution.x / iResolution.y;
                 float videoAspect = u_videoResolution.x / u_videoResolution.y;
                 
-                // --- 1. 計算相機背景紋理 Uv 座標 ---
                 vec2 camUv = vUv;
                 if (screenAspect < videoAspect) {
                     float scale = screenAspect / videoAspect;
@@ -160,23 +161,23 @@
                     camUv.y = (vUv.y - 0.5) * scale + 0.5;
                 }
                 
-                // 鏡像翻轉（讓自拍像照鏡子）
                 vec2 lookupUv = vec2(1.0 - camUv.x, camUv.y);
                 vec3 cameraCol = texture2D(u_cameraTexture, lookupUv).rgb;
                 
-                // --- 2. 計算目前像素在 Shader 特效中的座標 ---
+                // --- 修正 1：將相機畫面降低曝光（模擬 -2EV 的暗度） ---
+                // 數學公式：亮度下降 2 檔等於乘以 0.25 (1/2的平方)
+                cameraCol *= 0.25;
+                
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
                 uv.y -= 0.5;
                 
-                // --- 3. 將 JavaScript 傳進來的眼睛座標進行完全相同的空間轉換 ---
-                // 注意：因為 MediaPipe 影像在鏡像前傳出，所以我們傳入 X 軸時先取反轉 (1.0 - x)
                 vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyeRaw.x, u_leftEyeRaw.y), screenAspect, videoAspect);
                 vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyeRaw.x, u_rightEyeRaw.y), screenAspect, videoAspect);
                 
-                // --- 4. 施放煙火 ---
-                float t = iTime * 1.2; 
+                // --- 修正 2：調慢時間流逝速度（從 1.2 降到 0.5），讓單朵煙火生命週期大幅拉長 ---
+                float t = iTime * 0.5; 
                 vec3 fireworkCol = vec3(0.);
                 
                 if (u_hasFace > 0.5) {
@@ -196,7 +197,6 @@
                 fireworkCol = Rainbow(fireworkCol);
                 fireworkCol = clamp(fireworkCol, 0.0, 1.0);
                 
-                // 乾淨分明的遮罩混合
                 vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
                 
                 gl_FragColor = vec4(finalCol, 1.0);
@@ -220,7 +220,7 @@
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
-                u_videoResolution: { value: new THREE.Vector2(1280, 720) }, // 預設值，啟動後會自動覆蓋
+                u_videoResolution: { value: new THREE.Vector2(1280, 720) }, 
                 iTime: { value: 0 },
                 u_leftEyeRaw: { value: leftEyeRaw },
                 u_rightEyeRaw: { value: rightEyeRaw },
@@ -256,14 +256,12 @@
             material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
             
             if (videoElement.videoWidth) {
-                // 動態將相機最精確的硬體解析度送進 GPU
                 material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
             }
 
             renderer.render(scene, camera);
         }
 
-        // --- 核心：純粹抓取原始 0~1 的眼睛數據 ---
         const faceMesh = new FaceMesh({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
@@ -279,12 +277,9 @@
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 hasFace = true;
                 const landmarks = results.multiFaceLandmarks[0];
-
-                // 468和473是 MediaPipe 中極度精準的左、右眼球瞳孔中心點
                 const leftEye = landmarks[468];
                 const rightEye = landmarks[473];
 
-                // 完全不做任何前端數學運算，直接拋給 Shader
                 leftEyeRaw.set(leftEye.x, leftEye.y);
                 rightEyeRaw.set(rightEye.x, rightEye.y);
             } else {
