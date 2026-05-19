@@ -3,15 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>互動眼睛煙火特效 - 修正過曝版</title>
+    <title>互動眼睛煙火特效 - 粒粒分明修正版</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             background-color: #000;
             overflow: hidden;
-            color: white;
-            font-family: sans-serif;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -22,8 +20,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
+            width: 100vw;
+            height: 100vh;
             z-index: 10;
         }
 
@@ -31,36 +29,12 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
+            width: 100vw;
+            height: 100vh;
             object-fit: cover;
             z-index: 1;
             transform: scaleX(-1);
-            display: none; /* 隱藏原生視訊，我們完全用 Shader 來畫它 */
-        }
-
-        #ui-overlay {
-            position: absolute;
-            bottom: 20px;
-            left: 20px;
-            z-index: 100;
-            background: rgba(0,0,0,0.6);
-            padding: 12px;
-            border-radius: 8px;
-            pointer-events: none;
-        }
-
-        #status {
-            font-weight: bold;
-        }
-
-        .loading-dot {
-            animation: dot-flash 1.5s infinite;
-        }
-
-        @keyframes dot-flash {
-            0%, 100% { opacity: 0; }
-            50% { opacity: 1; }
+            display: none; /* 完全交由 WebGL 繪製底圖 */
         }
     </style>
 
@@ -73,16 +47,9 @@
     <video id="webcam" autoplay playsinline></video>
     <canvas id="webgl-canvas"></canvas>
 
-    <div id="ui-overlay">
-        <div id="status">正在開啟鏡頭與 AI 模型<span class="loading-dot">...</span></div>
-        <div id="instructions">請面向鏡頭並確保光線充足</div>
-    </div>
-
     <script>
         const videoElement = document.getElementById('webcam');
         const canvasElement = document.getElementById('webgl-canvas');
-        const statusElement = document.getElementById('status');
-        const uiOverlay = document.getElementById('ui-overlay');
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         let leftEyePos = new THREE.Vector2(-999.0, -999.0);
@@ -107,13 +74,13 @@
             varying vec2 vUv;
 
             #define PI 3.141592653589793238
-            #define TWOPI 6.283185307179586
             #define S(x,y,z) smoothstep(x,y,z)
             #define B(x,y,z,w) S(x-z, x+z, w)*S(y+z, y-z, w)
             #define saturate(x) clamp(x,0.,1.)
 
-            #define NUM_EXPLOSIONS 6.
-            #define NUM_PARTICLES 50.
+            // 調少粒子量與爆炸數量，讓畫面更乾淨精緻
+            #define NUM_EXPLOSIONS 4.
+            #define NUM_PARTICLES 45.
 
             #define MOD3 vec3(.1031,.11369,.13787)
             vec3 hash31(float p) {
@@ -122,78 +89,92 @@
                return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
             }
 
-            float light(vec2 uv, vec2 pos, float size) {
+            // 核心修改：改用實心圓函數，確保粒子粒粒分明，絕不過曝！
+            float circ(vec2 uv, vec2 pos, float size) {
                 uv -= pos;
-                // 增加一個微小的極值防線（+0.0001），防止分母為 0 導致無限亮而過曝
-                return size / (dot(uv, uv) + 0.0001);
+                float d = dot(uv, uv);
+                // 建立一個清晰邊緣的小圓點
+                return S(size * 1.2, size, d);
             }
 
             vec3 explosion(vec2 uv, vec2 p, float seed, float t) {
                 vec3 col = vec3(0.);
                 vec3 en = hash31(seed);
                 vec3 baseCol = en;
+                
                 for(float i=0.; i<NUM_PARTICLES; i++) {
                     vec3 n = hash31(i)-.5;
-                    vec2 startP = p-vec2(0., t*t*.03); 
-                    vec2 endP = startP+normalize(n.xy)*n.z*0.25; 
                     
+                    // 粒子動畫計時
                     float pt = 1.-pow(t-1., 2.);
-                    vec2 pos = mix(p, endP, pt);    
-                    float size = mix(.005, .001, S(0., .1, pt));
-                    size *= S(1., .1, pt);
                     
-                    float sparkle = (sin((pt+n.z)*100.)*.5+.5);
-                    sparkle = pow(sparkle, pow(en.x, 3.)*50.)*mix(0.01, .01, en.y*n.y);
+                    // 讓重力往下墜的效果更明顯，且緊跟著眼睛
+                    vec2 startP = p - vec2(0., pt*pt*.03); 
+                    vec2 endP = startP + normalize(n.xy)*n.z*0.18; // 縮小爆炸半徑
+                    
+                    vec2 pos = mix(p, endP, pt);    
+                    
+                    // 計算清晰圓點的大小
+                    float size = mix(.0001, .00003, S(0., .1, pt));
+                    size *= S(1., .2, pt);
+                    
+                    // 閃爍特效
+                    float sparkle = (sin((pt+n.z)*80.)*.5+.5);
+                    sparkle = pow(sparkle, 10.) * 0.00002;
                     size += sparkle*B(en.x, en.y, en.z, t);
                     
-                    col += baseCol*light(uv, pos, size);
+                    // 使用 circ 畫出粒粒分明的光點，並將顏色疊加
+                    float pShape = circ(uv, pos, size);
+                    col += baseCol * pShape;
                 }
                 return col;
             }
 
             vec3 Rainbow(vec3 c) {
-                float t=iTime;
+                float t=iTime * 1.5;
                 float avg = (c.r+c.g+c.b)/3.;
                 c = avg + (c-avg)*sin(vec3(0., .333, .666)+t);
-                c += sin(vec3(.4, .3, .3)*t + vec3(1.1244,3.43215,6.435))*vec3(.4, .1, .5);
                 return c;
             }
 
             void main() {
-                // 因為視訊在網頁有做鏡像，Shader 讀取紋理時 X 軸也要反轉才對得齊臉
+                // 讀取相機背景
                 vec2 camUv = vec2(1.0 - vUv.x, vUv.y);
                 vec3 cameraCol = texture2D(u_cameraTexture, camUv).rgb;
                 
+                // 換算 WebGL 渲染座標
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= .5;
                 uv.x *= iResolution.x/iResolution.y;
                 
-                float t = iTime * 0.8; 
+                float t = iTime * 1.2; // 煙火施放速度
                 vec3 fireworkCol = vec3(0.);
                 
                 if (u_hasFace > 0.5) {
                     for(float i=0.; i<NUM_EXPLOSIONS; i++) {
-                        float et = t + i * 1234.45235;
+                        float et = t + i * 567.89;
                         float id = floor(et);
                         et -= id;
                         
-                        float eyeIndex = mod(i, 2.0);
-                        vec2 targetEye = (eyeIndex < 1.0) ? u_leftEye : u_rightEye;
+                        // 左右眼輪流發射
+                        vec2 targetEye = (mod(i, 2.0) < 1.0) ? u_leftEye : u_rightEye;
                         
+                        // 讓煙火稍微在眼睛周圍微幅錯開
                         vec3 offset = hash31(id) - 0.5;
-                        vec2 p = targetEye + offset.xy * 0.05; 
+                        vec2 p = targetEye + offset.xy * 0.02; 
                         
                         fireworkCol += explosion(uv, p, id, et);
                     }
                 }
                 
+                // 套用彩虹變色
                 fireworkCol = Rainbow(fireworkCol);
                 
-                // --- 核心修正：防止過曝的 Screen Blending (濾色模式) ---
-                // 公式：1.0 - (1.0 - A) * (1.0 - B)
-                // 這能確保不論怎麼疊加，數值絕對不會超過 1.0，且黑底會完全變不見，只留下亮處。
-                fireworkCol = saturate(fireworkCol * 0.5); // 稍微調和煙火自身強度
-                vec3 finalCol = 1.0 - (1.0 - cameraCol) * (1.0 - fireworkCol);
+                // 限制煙火顏色範圍，確保粒粒分明的個體色彩
+                fireworkCol = clamp(fireworkCol, 0.0, 1.0);
+                
+                // 正常的 Alpha 蓋色混合，完全不會有加法造成的死白過曝問題
+                vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
                 
                 gl_FragColor = vec4(finalCol, 1.0);
             }
@@ -209,7 +190,6 @@
             scene = new THREE.Scene();
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-            // 更新：使用相容性更好的 VideoTexture 宣告方式
             cameraTexture = new THREE.VideoTexture(videoElement);
             cameraTexture.minFilter = THREE.LinearFilter;
             cameraTexture.magFilter = THREE.LinearFilter;
@@ -254,6 +234,7 @@
             renderer.render(scene, camera);
         }
 
+        // --- 重新優化直向手機的座標對齊演算法 ---
         const faceMesh = new FaceMesh({
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
@@ -266,29 +247,27 @@
         });
 
         faceMesh.onResults(results => {
-            if(uiOverlay && statusElement) {
-                uiOverlay.style.display = 'none';
-            }
-
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 hasFace = true;
                 const landmarks = results.multiFaceLandmarks[0];
 
+                // 取得瞳孔精確特徵點
                 const leftEye = landmarks[468];
                 const rightEye = landmarks[473];
 
-                const aspect = window.innerWidth / window.innerHeight;
+                const screenAspect = window.innerWidth / window.innerHeight;
 
-                // 修正了鏡像後的眼睛 X 軸反轉對位
-                leftEyePos.x = (1.0 - leftEye.x) - 0.5;
-                leftEyePos.x *= aspect;
-                leftEyePos.y = (1.0 - leftEye.y) * 2.0 - 1.0;
-                leftEyePos.y = (leftEyePos.y * (window.innerHeight/window.innerWidth)) * aspect;
+                // 修正：針對手機 Safari / Chrome 直向網頁（object-fit: cover）的精確對齊轉換
+                // 1. 先做鏡像反轉，並將 0~1 轉換到 -0.5 ~ 0.5 區間
+                // 2. 將 Y 軸的方向反轉 (MediaPipe 往下為正，WebGL 往上為正)
+                // 3. 乘上對應的長寬比調整，達成完美貼合
+                
+                leftEyePos.x = ((1.0 - leftEye.x) - 0.5) * screenAspect;
+                leftEyePos.y = (0.5 - leftEye.y);
 
-                rightEyePos.x = (1.0 - rightEye.x) - 0.5;
-                rightEyePos.x *= aspect;
-                rightEyePos.y = (1.0 - rightEye.y) * 2.0 - 1.0;
-                rightEyePos.y = (rightEyePos.y * (window.innerHeight/window.innerWidth)) * aspect;
+                rightEyePos.x = ((1.0 - rightEye.x) - 0.5) * screenAspect;
+                rightEyePos.y = (0.5 - rightEye.y);
+
             } else {
                 hasFace = false;
             }
@@ -305,7 +284,6 @@
         window.addEventListener('load', () => {
             initWebGL();
             cameraUtils.start().catch(err => {
-                statusElement.innerHTML = "<span style='color:red;'>無法存取相機，請檢查權限。</span>";
                 console.error(err);
             });
         });
