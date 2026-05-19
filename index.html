@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camera Warping Particles - Vibe Coding</title>
+    <title>Pure Particles - Camera Nebula</title>
     <style>
         body, html {
             margin: 0;
@@ -28,6 +28,7 @@
             font-size: 1.2rem;
             pointer-events: none;
             transition: opacity 0.5s ease;
+            z-index: 10;
         }
     </style>
     <!-- 引入 Three.js 核心庫 -->
@@ -35,7 +36,7 @@
 </head>
 <body>
 
-    <div id="loading">請允許相機權限以啟動粒子星雲...</div>
+    <div id="loading">請允許相機權限以啟動純黑粒子星雲...</div>
     <canvas id="canvas"></canvas>
 
     <!-- Fragment Shader (片段著色器) -->
@@ -45,20 +46,19 @@
         uniform sampler2D iChannel0; // 相機紋理輸入
 
         void main() {
-            // 將畫面上傳的座標轉為與 Shadertoy 相同的 fragCoord 概念
             vec2 fragCoord = gl_FragCoord.xy;
 
-            float time = (iTime + 100.0) * 30.0;
+            // 控制飛船前進與動態速度
+            float time = (iTime + 100.0) * 25.0;
             float s = 0.0;
             
             // 兩組 UV
             vec2 origUV = fragCoord / iResolution.xy; 
-            // 翻轉相機左右（鏡像），這樣你在鏡頭前動起來比較直覺
-            origUV.x = 1.0 - origUV.x; 
+            origUV.x = 1.0 - origUV.x; // 鏡像修正，讓互動更直覺
             
             vec2 uv = (-iResolution.xy + 2.0 * fragCoord ) / iResolution.y;
 
-            // 旋轉動態
+            // 空間旋轉動態
             float t = time * 0.005;
             float si = sin(t * 1.5);
             float co = cos(t);
@@ -70,33 +70,40 @@
             // 射線步進循環
             for (int r = 0; r < 60; r++) {
                 vec3 p = init + s * vec3(uv, 0.15);
-                p.z = mod(p.z, 2.0);
+                p.z = mod(p.z, 2.0); // 空間重覆週期
                 
-                // Kali Loop
+                // Kali Loop 幾何扭曲
                 for (int i = 0; i < 10; i++) {
                     p = abs(p * 2.04) / dot(p, p) - 0.75;
                 }
                 
-                float scarcity = 0.5;
-                float energy = max(0.0, length(p) * scarcity);
+                // 【純黑核心修改】：調整粒子稀疏度
+                float scarcity = 0.4; 
+                float energy = length(p) * scarcity;
+                
+                // 使用高次方（2.5次方）壓低暗部雜訊，讓粒子與背景的黑白對比極其強烈
+                energy = pow(energy, 2.5); 
+                
+                // 遠景淡出，避免遠處細碎粒子造成畫面雜亂
                 float fade = smoothstep(0.0, 0.5, 1.0 - s);
                 
                 // 採樣相機顏色
                 vec3 camCol = texture2D(iChannel0, origUV).rgb;
                 
-                // 累積顏色
-                col += camCol * energy * fade * 0.015;
+                // 累積顏色（只有當 energy > 0 時，相機顏色才會被渲染出來）
+                col += camCol * energy * fade * 0.012;
                 s += 0.015;
             }
 
-            col = pow(col, vec3(0.8));
-            vec3 bgCam = texture2D(iChannel0, origUV).rgb * 0.1;
+            // 稍微做一點亮度對比修正
+            col = pow(col, vec3(0.9));
             
-            gl_FragColor = vec4(col + bgCam, 1.0);
+            // 這裡完全移除了 bgCam 底色，確保沒粒子的地方就是純黑
+            gl_FragColor = vec4(col, 1.0);
         }
     </script>
 
-    <!-- Vertex Shader (頂點著色器：基本上就是把畫布鋪滿螢幕) -->
+    <!-- Vertex Shader (頂點著色器) -->
     <script id="vertexShader" type="x-shader/x-vertex">
         void main() {
             gl_Position = vec4(position, 1.0);
@@ -111,7 +118,7 @@
 
         const loadingEl = document.getElementById('loading');
 
-        // 1. 初始化相機鏡頭
+        // 1. 取得相機權限與視訊串流
         async function setupCamera() {
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 loadingEl.innerText = "你的瀏覽器不支援相機功能";
@@ -129,7 +136,6 @@
                 video.autoplay = true;
                 video.playsInline = true;
                 
-                // 確保影片中繼資料載入後才開始渲染，避免抓到空紋理
                 return new Promise((resolve) => {
                     video.onloadedmetadata = () => {
                         video.play();
@@ -143,24 +149,22 @@
             }
         }
 
-        // 2. 初始化 WebGL / Three.js 舞台
+        // 2. 初始化 WebGL 舞台
         function initWebGL(videoElement) {
             const canvas = document.getElementById('canvas');
             
-            // 建立場景與正交相機（用來畫 2D 平面貼條）
             scene = new THREE.Scene();
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
             
             renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
 
-            // 將相機畫面轉為 Three.js 的 Texture
+            // 將相機視訊轉為 Three.js 紋理
             videoTexture = new THREE.VideoTexture(videoElement);
             videoTexture.minFilter = THREE.LinearFilter;
             videoTexture.magFilter = THREE.LinearFilter;
-            videoTexture.format = THREE.RGBFormat;
 
-            // 設定傳給 Shader 的變數 (Uniforms)
+            // 傳遞給 Shader 的 Uniform 變數
             uniforms = {
                 iTime: { value: 0 },
                 iResolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
@@ -174,15 +178,14 @@
                 uniforms: uniforms
             });
 
-            // 建立一個鋪滿螢幕的平面
+            // 建立鋪滿螢幕的網格並加入場景
             const geometry = new THREE.PlaneGeometry(2, 2);
             mesh = new THREE.Mesh(geometry, material);
             scene.add(mesh);
 
-            // 隱藏 Loading 字樣
+            // 順利啟動後隱藏 Loading 提示
             loadingEl.style.opacity = 0;
 
-            // 監聽視窗縮放
             window.addEventListener('resize', onWindowResize);
         }
 
@@ -191,20 +194,16 @@
             uniforms.iResolution.value.set(window.innerWidth, window.innerHeight);
         }
 
-        // 3. 動畫渲染循環
+        // 3. 主渲染循環
         const clock = new THREE.Clock();
 
         function animate() {
             requestAnimationFrame(animate);
-            
-            // 更新時間
             uniforms.iTime.value = clock.getElapsedTime();
-            
-            // 渲染畫面
             renderer.render(scene, camera);
         }
 
-        // 主入口
+        // 程式主入口
         async function main() {
             const videoElement = await setupCamera();
             if (videoElement) {
