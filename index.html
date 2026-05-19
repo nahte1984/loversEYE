@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v3.3</title>
+    <title>whenever i see u | v3.4</title>
     <style>
         body {
             margin: 0;
@@ -230,6 +230,15 @@
                 
                 // --- 4. 最終合成 ---
                 vec3 finalCol = mix(cameraCol, fireworkCol, length(fireworkCol));
+                
+                // --- 5. 畫面暗角 (Vignette) ---
+                // 計算當前像素到螢幕中心的距離 (-0.5 到 0.5 區間)
+                vec2 centerDist = (gl_FragCoord.xy / iResolution.xy) - 0.5;
+                // 利用 smoothstep 創造柔和的衰減：離中心 0.25 開始變暗，到了 0.75 最暗
+                float vignette = smoothstep(0.75, 0.25, length(centerDist));
+                // 將暗角應用到最終畫面上，保留邊緣 30% 的亮度避免變成純黑
+                finalCol *= mix(0.3, 1.0, vignette);
+
                 gl_FragColor = vec4(finalCol, 1.0);
             }
         `;
