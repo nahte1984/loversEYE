@@ -3,65 +3,90 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>眼睛煙火互動特效</title>
+    <title>互動眼睛煙火特效</title>
     <style>
         body {
             margin: 0;
             padding: 0;
             background-color: #000;
             overflow: hidden;
+            color: white;
             font-family: sans-serif;
-        }
-        /* 隱藏原始視訊畫面，我們只需要它的數據 */
-        #webcam {
-            display: none;
-        }
-        /* 讓畫布填滿螢幕 */
-        #canvas-container {
-            position: relative;
-            width: 100vw;
+            display: flex;
+            justify-content: center;
+            align-items: center;
             height: 100vh;
         }
-        canvas {
+
+        #webgl-canvas {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-        }
-        #loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            color: white;
-            font-size: 1.5rem;
             z-index: 10;
-            pointer-events: none;
+            /* 讓 Shader 畫布保持透明，露出背景相機 */
+            background: transparent; 
+        }
+
+        /* 視訊標籤用作背景 */
+        #webcam {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* 確保視訊填滿 */
+            z-index: 1; /* 在 Shader 之下 */
+            transform: scaleX(-1); /* 鏡像視訊，更像照鏡子 */
+        }
+
+        #ui-overlay {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            z-index: 100;
+            background: rgba(0,0,0,0.5);
+            padding: 10px;
+            border-radius: 8px;
+            pointer-events: none; /* 允許點擊穿透 */
+        }
+
+        #status {
+            font-weight: bold;
+        }
+
+        .loading-dot {
+            animation: dot-flash 1.5s infinite;
+        }
+
+        @keyframes dot-flash {
+            0%, 100% { opacity: 0; }
+            50% { opacity: 1; }
         }
     </style>
 
-    <!-- 引入 Three.js 核心庫 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
-    <!-- 引入 MediaPipe Face Mesh 用於人臉偵測 -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
 </head>
 <body>
 
-    <div id="loading">正在請求相機權限並載入 AI 模型...</div>
-    <div id="canvas-container">
-        <!-- 視訊標籤 (隱藏) -->
-        <video id="webcam" autoplay playsinline></video>
-        <!-- WebGL 渲染畫布 -->
-        <canvas id="webgl-canvas"></canvas>
+    <video id="webcam" autoplay playsinline></video>
+    
+    <canvas id="webgl-canvas"></canvas>
+
+    <div id="ui-overlay">
+        <div id="status">正在載入 AI 模型<span class="loading-dot">...</span></div>
+        <div id="instructions">請確保畫面中有臉部出現</div>
     </div>
 
     <script>
         const videoElement = document.getElementById('webcam');
         const canvasElement = document.getElementById('webgl-canvas');
-        const loadingElement = document.getElementById('loading');
+        const statusElement = document.getElementById('status');
+        const uiOverlay = document.getElementById('ui-overlay');
 
         let renderer, scene, camera, material, mesh;
         let leftEyePos = new THREE.Vector2(-999.0, -999.0); // 初始值在螢幕外
@@ -69,19 +94,25 @@
         let hasFace = false;
 
         // --- 1. 定義修改後的 Shader ---
-        // 為了支援互動，將原本 mainImage 隨機產生的位置，改為由 JavaScript 傳入的眼睛 uniforms 變數
+        // 此 Shader 已經過調整，可直接疊加在相機畫面上，並精確對準眼睛位置
+        // 核心邏輯源自 image_0.png 的描述和 image_1.png 的彩虹色調
+
         const vertexShader = `
+            varying vec2 vUv;
             void main() {
+                vUv = uv;
                 gl_Position = vec4(position, 1.0);
             }
         `;
 
         const fragmentShader = `
+            uniform sampler2D u_cameraTexture; // 接收相機畫面紋理 (原本是深藍底，現在改成相機)
             uniform vec2 iResolution;
             uniform float iTime;
             uniform vec2 u_leftEye;   // JS 傳入的左眼座標
             uniform vec2 u_rightEye;  // JS 傳入的右眼座標
             uniform float u_hasFace;  // 是否有偵測到臉 (1.0 = 有, 0.0 = 無)
+            varying vec2 vUv;
 
             #define PI 3.141592653589793238
             #define TWOPI 6.283185307179586
@@ -100,9 +131,10 @@
                return fract(vec3((p3.x + p3.y)*p3.z, (p3.x+p3.z)*p3.y, (p3.y+p3.z)*p3.x));
             }
 
+            // 此函數已被修改，以產生更像原本 shader 的粒子光點
             float light(vec2 uv, vec2 pos, float size) {
                 uv -= pos;
-                size *= size;
+                // 此處的 dot(uv, uv) 計算距離的平方，與原本的 size/dot(uv, uv) 邏輯一致
                 return size/dot(uv, uv);
             }
 
@@ -124,11 +156,13 @@
                     sparkle = pow(sparkle, pow(en.x, 3.)*50.)*mix(0.01, .01, en.y*n.y);
                     size += sparkle*B(en.x, en.y, en.z, t);
                     
+                    // 將光點結果疊加
                     col += baseCol*light(uv, pos, size);
                 }
                 return col;
             }
 
+            // Rainbow 函數源自 image_1.png 的迷幻色調邏輯
             vec3 Rainbow(vec3 c) {
                 float t=iTime;
                 float avg = (c.r+c.g+c.b)/3.;
@@ -138,12 +172,16 @@
             }
 
             void main() {
+                // 獲取相機畫面
+                vec3 cameraCol = texture2D(u_cameraTexture, vUv).rgb;
+                
+                // Shader 座標校正
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= .5;
                 uv.x *= iResolution.x/iResolution.y;
                 
-                float t = iTime * 0.8; // 稍微加快煙火循環速度
-                vec3 c = vec3(0.);
+                float t = iTime * 0.8; // 時間流逝
+                vec3 fireworkCol = vec3(0.);
                 
                 // 只有在畫面上偵測到人臉時才施放煙火
                 if (u_hasFace > 0.5) {
@@ -152,19 +190,32 @@
                         float id = floor(et);
                         et -= id;
                         
-                        // 決定這朵煙火屬於左眼還是右眼
-                        vec2 targetEye = (mod(i, 2.0) < 1.0) ? u_leftEye : u_rightEye;
+                        // 決定這朵煙火屬於左眼還是右眼 (0=左, 1=右)
+                        float eyeIndex = mod(i, 2.0);
+                        vec2 targetEye = (eyeIndex < 1.0) ? u_leftEye : u_rightEye;
                         
-                        // 在眼睛座標周圍加上一點點隨機微調，讓煙火交錯開來
+                        // 在眼睛座標周圍加上隨機微調，產生層次感
                         vec3 offset = hash31(id) - 0.5;
                         vec2 p = targetEye + offset.xy * 0.08; 
                         
-                        c += explosion(uv, p, id, et);
+                        fireworkCol += explosion(uv, p, id, et);
                     }
                 }
                 
-                c = Rainbow(c);
-                gl_FragColor = vec4(c, 1.0);
+                // 套用彩虹色調 (Rainbow logic)
+                fireworkCol = Rainbow(fireworkCol);
+                
+                // --- 混合邏輯 ---
+                // 我們不想產生深藍底色，而是將煙火光點疊加在相機畫面上。
+                // 此處使用單純的 Additive Blending (相加)，產生強烈的光點效果。
+                // 同時，我們確保只有煙火本身是彩虹色的，相機背景保持原本顏色。
+                
+                // 限制煙火亮點強度 (以防過曝)
+                fireworkCol = saturate(fireworkCol);
+                
+                vec3 finalCol = cameraCol + fireworkCol * 1.8; // 加強煙火亮度
+                
+                gl_FragColor = vec4(finalCol, 1.0);
             }
         `;
 
@@ -173,14 +224,21 @@
             const width = window.innerWidth;
             const height = window.innerHeight;
 
-            renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
+            // 建立渲染器
+            renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true, alpha: true });
             renderer.setSize(width, height);
 
+            // 建立場景和正交相機
             scene = new THREE.Scene();
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
 
-            // 設置傳遞給 Shader 的變數 (Uniforms)
+            // 建立相機紋理
+            const cameraTexture = new THREE.VideoTexture(videoElement);
+            cameraTexture.format = THREE.RGBFormat; // 確保格式正確
+
+            // 設置傳遞給 Shader 的 Uniforms
             const uniforms = {
+                u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
                 iTime: { value: 0 },
                 u_leftEye: { value: leftEyePos },
@@ -188,13 +246,17 @@
                 u_hasFace: { value: 0.0 }
             };
 
+            // 建立Shader材質
             material = new THREE.ShaderMaterial({
                 vertexShader: vertexShader,
                 fragmentShader: fragmentShader,
-                uniforms: uniforms
+                uniforms: uniforms,
+                transparent: true, // 確保畫布本身是透明的
+                depthTest: false, // 禁用深度測試
+                depthWrite: false
             });
 
-            // 建立一個填滿螢幕的平面來畫 Shader
+            // 建立一個填滿螢幕的平面
             const geometry = new THREE.PlaneGeometry(2, 2);
             mesh = new THREE.Mesh(geometry, material);
             scene.add(mesh);
@@ -203,6 +265,7 @@
             animate(0);
         }
 
+        // 處理視窗大小調整
         function onWindowResize() {
             const width = window.innerWidth;
             const height = window.innerHeight;
@@ -210,11 +273,12 @@
             material.uniforms.iResolution.value.set(width, height);
         }
 
+        // 動態更新循環
         function animate(timestamp) {
             requestAnimationFrame(animate);
             // 更新時間
             material.uniforms.iTime.value = timestamp / 1000.0;
-            // 更新眼睛位置與人臉狀態
+            // 更新眼睛位置與臉部狀態
             material.uniforms.u_leftEye.value.copy(leftEyePos);
             material.uniforms.u_rightEye.value.copy(rightEyePos);
             material.uniforms.u_hasFace.value = hasFace ? 1.0 : 0.0;
@@ -227,62 +291,71 @@
             locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
 
+        // 設置追蹤選項
         faceMesh.setOptions({
             maxNumFaces: 1, // 只追蹤一張臉
-            refineLandmarks: true, // 精細追蹤（包含眼球瞳孔）
-            minDetectionConfidence: 0.5,
-            minTrackingConfidence: 0.5
+            refineLandmarks: true, // 使用精細模式（包含眼球中心）
+            minDetectionConfidence: 0.6,
+            minTrackingConfidence: 0.6
         });
 
-        // 接收 AI 偵測後的結果
+        // 當偵測到結果時呼叫
         faceMesh.onResults(results => {
             // 隱藏載入中文字
-            if(loadingElement) {
-                loadingElement.style.display = 'none';
+            if(statusElement && statusElement.innerText.includes("正在載入")) {
+                uiOverlay.style.display = 'none';
             }
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 hasFace = true;
                 const landmarks = results.multiFaceLandmarks[0];
 
-                // MediaPipe 的眼睛索引點：
-                // 左眼中心大約在 468，右眼中心大約在 473 (精細模式)
+                // MediaPipe 的眼睛索引點：左眼中心 468, 右眼中心 473 (在 refineLandmarks 模式下)
                 const leftEye = landmarks[468];
                 const rightEye = landmarks[473];
 
                 const aspect = window.innerWidth / window.innerHeight;
 
-                // 將 MediaPipe 的 0~1 空間座標，轉換為 Shader 的 UV 座標系統
-                // 因為自拍鏡頭像照鏡子，X 軸需要左右反轉 (1.0 - x)
-                leftEyePos.x = (1.0 - leftEye.x) - 0.5;
-                leftEyePos.x *= aspect;
-                leftEyePos.y = (1.0 - leftEye.y) * 2.0 - 1.0; // 映射到對應高度
-                leftEyePos.y = (leftEyePos.y * (window.innerHeight/window.innerWidth)) * aspect; // 修正比例
+                // --- 座標轉換 (MediaPipe -> WebGL UV -> Shader System) ---
+                // MediaPipe 座標是 (0~1, 左上->右下)
 
+                // 左眼
+                leftEyePos.x = (1.0 - leftEye.x) - 0.5; // X軸左右鏡像校正並位移
+                leftEyePos.x *= aspect; // 校正長寬比
+                leftEyePos.y = (1.0 - leftEye.y) * 2.0 - 1.0; // Y軸映射
+                leftEyePos.y = (leftEyePos.y * (window.innerHeight/window.innerWidth)) * aspect; // 修正高度比例
+
+                // 右眼
                 rightEyePos.x = (1.0 - rightEye.x) - 0.5;
                 rightEyePos.x *= aspect;
                 rightEyePos.y = (1.0 - rightEye.y) * 2.0 - 1.0;
                 rightEyePos.y = (rightEyePos.y * (window.innerHeight/window.innerWidth)) * aspect;
+                
             } else {
-                hasFace = false; // 沒偵測到人臉時，不顯示煙火
+                hasFace = false; // 沒偵測到臉，不顯示煙火
             }
         });
 
-        // --- 4. 啟動鏡頭與串流 ---
+        // --- 4. 啟動鏡頭串流 ---
         const cameraUtils = new Camera(videoElement, {
             onFrame: async () => {
                 await faceMesh.send({ image: videoElement });
             },
-            width: 640,
-            height: 480
+            width: 1280, // 設置較高解析度以便臉部追蹤
+            height: 720
         });
 
-        // 啟動流程
-        initWebGL();
-        cameraUtils.start().catch(err => {
-            loadingElement.innerText = "無法開啟相機，請確保已給予相機權限。";
-            console.error(err);
-        });
+        // 初始化所有內容
+        function start() {
+            initWebGL();
+            cameraUtils.start().catch(err => {
+                statusElement.innerHTML = "<span style='color:red;'>無法存取相機，請確保已給予權限。</span>";
+                console.error(err);
+            });
+        }
+
+        // 當文檔載入完成後啟動
+        window.addEventListener('load', start);
 
     </script>
 </body>
