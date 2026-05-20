@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.2</title>
+    <title>whenever i see u | v9.2.1</title>
     <style>
         body {
             margin: 0;
             padding: 0;
-            background-color: #000;
+            background-color: #ffffff;
             overflow: hidden;
             display: flex;
             justify-content: center;
@@ -41,7 +41,7 @@
             left: 0;
             width: 100vw;
             height: 100vh;
-            background-color: #000; /* 全黑底色擋住初始畫面 */
+            background-color: #ffffff; /* 全黑底色擋住初始畫面 */
             z-index: 20; /* 確保在 WebGL 畫布上方 */
             display: flex;
             justify-content: center;
@@ -57,19 +57,19 @@
             transform: scale(0.95); /* 點擊時的微縮放回饋 */
         }
 
-        /* 螢幕為直向 (長) 時，寬度為 70vw */
+        /* 螢幕為直向 (長) 時，寬度 */
         @media (orientation: portrait) {
             #start-btn {
-                width: 70vw;
+                width: 85vw;
                 height: auto;
             }
         }
 
-        /* 螢幕為橫向 (寬) 時，高度為 70vh */
+        /* 螢幕為橫向 (寬) 時，高度 */
         @media (orientation: landscape) {
             #start-btn {
                 width: auto;
-                height: 70vh;
+                height: 80vh;
             }
         }
     </style>
@@ -451,8 +451,8 @@
             // 啟動 WebGL 與相機權限
             initWebGL();
             cameraUtils.start().catch(err => {
-                console.error("相機啟動失敗：", err);
-                alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
+                console.error("Camera initialization failed:", err);
+                alert(""Unable to start camera. Please verify that camera access is enabled on your device.");
                 
                 // 如果失敗了，把開始畫面顯示回來
                 startScreen.style.display = 'flex'; 
