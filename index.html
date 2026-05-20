@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.0 (Focus Heart Edition)</title>
+    <title>whenever i see u | v9.2</title>
     <style>
         body {
             margin: 0;
@@ -33,6 +33,45 @@
             opacity: 0;
             pointer-events: none;
         }
+
+        /* --- 新增：開始畫面與圖片樣式 --- */
+        #start-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background-color: #000; /* 全黑底色擋住初始畫面 */
+            z-index: 20; /* 確保在 WebGL 畫布上方 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #start-btn {
+            cursor: pointer;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+        }
+
+        #start-btn:active {
+            transform: scale(0.95); /* 點擊時的微縮放回饋 */
+        }
+
+        /* 螢幕為直向 (長) 時，寬度為 70vw */
+        @media (orientation: portrait) {
+            #start-btn {
+                width: 70vw;
+                height: auto;
+            }
+        }
+
+        /* 螢幕為橫向 (寬) 時，高度為 70vh */
+        @media (orientation: landscape) {
+            #start-btn {
+                width: auto;
+                height: 70vh;
+            }
+        }
     </style>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -41,12 +80,18 @@
 </head>
 <body>
 
+    <div id="start-screen">
+        <img id="start-btn" src="start.png" alt="Start Experience">
+    </div>
+
     <video id="webcam" autoplay playsinline></video>
     <canvas id="webgl-canvas"></canvas>
 
     <script>
         const videoElement = document.getElementById('webcam');
         const canvasElement = document.getElementById('webgl-canvas');
+        const startScreen = document.getElementById('start-screen');
+        const startBtn = document.getElementById('start-btn');
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
@@ -393,12 +438,28 @@
             height: 720
         });
 
-        window.addEventListener('load', () => {
+        // --- 新增：攔截自動播放，改為點擊啟動 ---
+        let isStarted = false;
+        
+        startBtn.addEventListener('click', () => {
+            if (isStarted) return;
+            isStarted = true;
+            
+            // 點擊後隱藏開始畫面，露出後方的 WebGL 畫布
+            startScreen.style.display = 'none';
+
+            // 啟動 WebGL 與相機權限
             initWebGL();
             cameraUtils.start().catch(err => {
                 console.error("相機啟動失敗：", err);
+                alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
+                
+                // 如果失敗了，把開始畫面顯示回來
+                startScreen.style.display = 'flex'; 
+                isStarted = false;
             });
         });
+        
     </script>
 </body>
 </html>
