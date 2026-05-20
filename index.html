@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.2.1</title>
+    <title>whenever i see u | v9.2.2</title>
     <style>
         body {
             margin: 0;
             padding: 0;
-            background-color: #ffffff;
+            background-color: #000;
             overflow: hidden;
             display: flex;
             justify-content: center;
@@ -34,15 +34,15 @@
             pointer-events: none;
         }
 
-        /* --- 新增：開始畫面與圖片樣式 --- */
+        /* --- 開始畫面與圖片樣式 --- */
         #start-screen {
             position: absolute;
             top: 0;
             left: 0;
             width: 100vw;
             height: 100vh;
-            background-color: #ffffff; /* 全黑底色擋住初始畫面 */
-            z-index: 20; /* 確保在 WebGL 畫布上方 */
+            background-color: #e6e6e6; /* [修改1] 底色 */
+            z-index: 20;
             display: flex;
             justify-content: center;
             align-items: center;
@@ -54,10 +54,10 @@
         }
 
         #start-btn:active {
-            transform: scale(0.95); /* 點擊時的微縮放回饋 */
+            transform: scale(0.95);
         }
 
-        /* 螢幕為直向 (長) 時，寬度 */
+        /* [修改2] 螢幕為直向 (長) 時，寬度為 85vw */
         @media (orientation: portrait) {
             #start-btn {
                 width: 85vw;
@@ -65,7 +65,7 @@
             }
         }
 
-        /* 螢幕為橫向 (寬) 時，高度 */
+        /* [修改3] 螢幕為橫向 (寬) 時，高度為 80vh */
         @media (orientation: landscape) {
             #start-btn {
                 width: auto;
@@ -127,11 +127,8 @@
             // 背景煙火設定 (稀疏點綴版)
             // ==========================================
             #define Gravitational_ACCE vec2(0.0, -0.2)
-            // 粒子數量砍半
             #define NUM_SPARKS 15
-            // 同時出現的煙火數量減少
             #define NUM_FIREWORKS 3
-            // 發射週期拉長
             #define Period 8.0
 
             float rand(float co) { 
@@ -438,7 +435,7 @@
             height: 720
         });
 
-        // --- 新增：攔截自動播放，改為點擊啟動 ---
+        // --- 攔截自動播放，改為點擊啟動 ---
         let isStarted = false;
         
         startBtn.addEventListener('click', () => {
@@ -451,8 +448,8 @@
             // 啟動 WebGL 與相機權限
             initWebGL();
             cameraUtils.start().catch(err => {
-                console.error("Camera initialization failed:", err);
-                alert(""Unable to start camera. Please verify that camera access is enabled on your device.");
+                console.error("相機啟動失敗：", err);
+                alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
                 
                 // 如果失敗了，把開始畫面顯示回來
                 startScreen.style.display = 'flex'; 
