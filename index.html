@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.3.4</title>
+    <title>whenever i see u | v9.4</title>
     <style>
         body {
             margin: 0;
@@ -34,7 +34,6 @@
             pointer-events: none;
         }
 
-        /* --- 開始畫面與圖片樣式 --- */
         #start-screen {
             position: absolute;
             top: 0;
@@ -93,16 +92,12 @@
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
-        // --- 支援多張臉和嘴巴偵測的陣列 ---
-        const MAX_FACES = 2; // 設定最大偵測人數
+        const MAX_FACES = 2; 
         let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
         let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
         let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
-        let mouthsOpen = Array(MAX_FACES).fill(0.0); // 1.0 表示張開，0.0 表示閉合
+        let mouthsOpen = Array(MAX_FACES).fill(0.0); 
         let faceCount = 0;
-
-        let videoWidth = 1280;
-        let videoHeight = 720;
 
         const vertexShader = `
             varying vec2 vUv;
@@ -118,7 +113,6 @@
             uniform vec2 u_videoResolution;
             uniform float iTime;
             
-            // Uniforms 陣列以支援多臉
             const int MAX_FACES = ${MAX_FACES};
             uniform vec2 u_leftEyes[MAX_FACES];   
             uniform vec2 u_rightEyes[MAX_FACES];  
@@ -131,11 +125,8 @@
             #define PI      3.141592653589793
             #define TWO_PI  6.283185307179586
 
-            // ==========================================
-            // 背景煙火設定 (稀疏點綴版)
-            // ==========================================
             #define Gravitational_ACCE vec2(0.0, -0.2)
-            #define NUM_SPARKS 15
+            #define NUM_SPARKS 12       // 優化：稍微減少背景煙火火花數
             #define NUM_FIREWORKS 3
             #define Period 8.0
 
@@ -178,9 +169,6 @@
                 return color;
             }
 
-            // ==========================================
-            // 愛心煙火設定 (Heart Fireworks Functions)
-            // ==========================================
             float star5SDF( vec2 p, float r, float m){
                 const vec2 k1 = vec2(0.809016994375, -0.587785252292);
                 const vec2 k2 = vec2(-k1.x,k1.y);
@@ -210,14 +198,16 @@
             }
 
             vec3 renderHeartFireworks(vec2 scaled_uv, vec2 center, float timeOffset) {
+                float dist = length(scaled_uv - center);
+                // 優化：提早跳出，不在煙火範圍內的像素直接回傳黑色，大幅節省算力
+                if(dist > 0.7) return vec3(0.0); 
+
                 float t = (iTime * 0.35) + timeOffset; 
                 vec3 color = vec3(0.);
                 
-                const float jmax = 3.0; 
-                const float imax = 20.0; 
-                
-                float dist = length(scaled_uv - center);
-                if(dist > 1.8) return vec3(0.0);
+                // 優化：降低煙火的迴圈層次與粒子數，視覺影響小但效能提升大
+                const float jmax = 2.0; 
+                const float imax = 15.0; 
 
                 for(float j=0.; j<jmax; j++){
                     float ja = j/jmax;
@@ -245,7 +235,6 @@
                 return color;
             }
 
-            // --- 座標轉換校正 ---
             vec2 transformCoordinates(vec2 rawCoord, float screenAspect, float videoAspect) {
                 vec2 uv = vec2(rawCoord.x, 1.0 - rawCoord.y);
                 if (screenAspect < videoAspect) {
@@ -269,11 +258,11 @@
                 vec2 dirFromCenter = vUv - screenCenter;
                 float distFromCenter = length(dirFromCenter);
 
-                // 1. 相機底圖處理 (保留放射狀模糊)
                 vec3 cameraCol = vec3(0.0);
                 float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
                 
-                const int SAMPLES = 24;
+                // 優化：減少模糊採樣次數，從 24 降為 10
+                const int SAMPLES = 10;
                 for (int s = 0; s < SAMPLES; s++) {
                     float t_blur = (float(s) / float(SAMPLES - 1)) - 0.5;
                     vec2 sampleUV = vUv + dirFromCenter * (t_blur * blurStrength);
@@ -292,11 +281,9 @@
                 }
                 cameraCol /= float(SAMPLES);
                 
-                // 相機畫面壓暗，凸顯煙火高光
                 cameraCol *= 0.55;
                 vec3 finalCol = cameraCol;
 
-                // 2. 融入背景煙火
                 vec2 fwCoord = gl_FragCoord.xy / iResolution.y;
                 vec3 fwColor = vec3(0.0);
                 
@@ -312,7 +299,6 @@
                 }
                 finalCol = clamp(finalCol + fwColor, 0.0, 1.0);
 
-                // 3. 愛心煙火噴發特效 (多張臉部特徵)
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
@@ -321,31 +307,33 @@
                 vec2 scaled_uv = uv * 2.0;
                 vec3 faceFX = vec3(0.0);
                 
-                // 遍歷所有偵測到的臉
                 for (int idx = 0; idx < MAX_FACES; idx++) {
                     if (idx >= u_faceCount) break;
 
-                    // 眼睛煙火
                     vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyes[idx].x, u_leftEyes[idx].y), screenAspect, videoAspect);
                     vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyes[idx].x, u_rightEyes[idx].y), screenAspect, videoAspect);
-                    
                     vec2 scaled_leftEye = leftEye * 2.0;
                     vec2 scaled_rightEye = rightEye * 2.0;
                     
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(idx) * 0.1 + 0.5);
+                    // 優化：距離剔除 (Distance Culling)。只在眼睛附近運算，省下巨量 GPU 資源
+                    if (length(scaled_uv - scaled_leftEye) < 0.7) {
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
+                    }
+                    if (length(scaled_uv - scaled_rightEye) < 0.7) {
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(idx) * 0.1 + 0.5);
+                    }
 
-                    // 嘴巴煙火 (如果張開)
                     if (u_mouthsOpen[idx] > 0.5) {
                         vec2 mouth = transformCoordinates(vec2(1.0 - u_mouths[idx].x, u_mouths[idx].y), screenAspect, videoAspect);
                         vec2 scaled_mouth = mouth * 2.0;
-                        faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
+                        if (length(scaled_uv - scaled_mouth) < 0.7) {
+                            faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
+                        }
                     }
                 }
                 
                 finalCol = clamp(finalCol + faceFX, 0.0, 1.0);
                 
-                // 4. 全局畫面暗角 (Vignette)
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
 
@@ -359,6 +347,9 @@
 
             renderer = new THREE.WebGLRenderer({ canvas: canvasElement, antialias: true });
             renderer.setSize(width, height);
+            
+            // 優化：限制螢幕渲染的最高像素密度，避免 Retina 等高解析度螢幕拖垮效能
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.2));
 
             scene = new THREE.Scene();
             camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -404,7 +395,6 @@
             requestAnimationFrame(animate);
             material.uniforms.iTime.value = timestamp / 1000.0;
             
-            // 更新陣列 Uniforms
             material.uniforms.u_leftEyes.value = leftEyesRaw;
             material.uniforms.u_rightEyes.value = rightEyesRaw;
             material.uniforms.u_mouths.value = mouthsRaw;
@@ -429,12 +419,12 @@
             minTrackingConfidence: 0.5
         });
 
-        // 嘴巴張開的距離閾值 (可調整)
-        const MOUTH_OPEN_THRESHOLD = 0.9; 
+        // 修改：嘴巴張開的距離閾值調降至 0.03 (原為 0.9，太高無法觸發)
+        const MOUTH_OPEN_THRESHOLD = 0.03; 
 
         faceMesh.onResults(results => {
             faceCount = 0;
-            mouthsOpen.fill(0.0); // 每幀重置嘴巴狀態
+            mouthsOpen.fill(0.0); 
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 faceCount = Math.min(results.multiFaceLandmarks.length, MAX_FACES);
@@ -442,7 +432,6 @@
                 for (let idx = 0; idx < faceCount; idx++) {
                     const landmarks = results.multiFaceLandmarks[idx];
                     
-                    // 眼睛 LandMarks (左眼 468, 右眼 473)
                     const leftEye = landmarks[468];
                     const rightEye = landmarks[473];
                     
@@ -451,25 +440,21 @@
                         rightEyesRaw[idx].set(rightEye.x, rightEye.y);
                     }
 
-                    // 嘴巴 LandMarks (13: 上嘴唇內側中心, 14: 下嘴唇內側中心)
                     const upperLipInner = landmarks[13];
                     const lowerLipInner = landmarks[14];
 
                     if (upperLipInner && lowerLipInner) {
-                        // 計算嘴巴中心位置
                         mouthsRaw[idx].set(
                             (upperLipInner.x + lowerLipInner.x) / 2.0,
                             (upperLipInner.y + lowerLipInner.y) / 2.0
                         );
 
-                        // 計算嘴巴張開距離
                         const mouthDistance = Math.sqrt(
                             Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
                             Math.pow(upperLipInner.y - lowerLipInner.y, 2) +
                             Math.pow(upperLipInner.z - lowerLipInner.z, 2)
                         );
 
-                        // 判斷是否張開
                         if (mouthDistance > MOUTH_OPEN_THRESHOLD) {
                             mouthsOpen[idx] = 1.0; 
                         }
