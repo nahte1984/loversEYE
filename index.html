@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.3.0 (Multi-Face & Mouth)</title>
+    <title>whenever i see u | v9.3.1 (Fixed Multi-Face & Mouth)</title>
     <style>
         body {
             margin: 0;
@@ -41,7 +41,7 @@
             left: 0;
             width: 100vw;
             height: 100vh;
-            background-color: #000; /* [修改1] 底色 */
+            background-color: #000;
             z-index: 20;
             display: flex;
             justify-content: center;
@@ -57,7 +57,6 @@
             transform: scale(0.95);
         }
 
-        /* [修改2] 螢幕為直向 (長) 時，寬度 */
         @media (orientation: portrait) {
             #start-btn {
                 width: 70vw;
@@ -65,7 +64,6 @@
             }
         }
 
-        /* [修改3] 螢幕為橫向 (寬) 時，高度 */
         @media (orientation: landscape) {
             #start-btn {
                 width: auto;
@@ -95,13 +93,13 @@
 
         let renderer, scene, camera, material, mesh, cameraTexture;
         
-        // --- 修改：支持多張臉和嘴巴偵測 ---
-        const MAX_FACES = 2; // 設置最大偵測人數
-        let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
-        let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
-        let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5)); //
+        // --- 支援多張臉和嘴巴偵測的陣列 ---
+        const MAX_FACES = 2; // 設定最大偵測人數
+        let leftEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
+        let rightEyesRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
+        let mouthsRaw = Array(MAX_FACES).fill().map(() => new THREE.Vector2(0.5, 0.5));
         let mouthsOpen = Array(MAX_FACES).fill(0.0); // 1.0 表示張開，0.0 表示閉合
-        let faceCount = 0; //
+        let faceCount = 0;
 
         let videoWidth = 1280;
         let videoHeight = 720;
@@ -120,13 +118,13 @@
             uniform vec2 u_videoResolution;
             uniform float iTime;
             
-            // --- 修改：Uniforms 變更為數組以支持多臉 ---
+            // Uniforms 陣列以支援多臉
             const int MAX_FACES = ${MAX_FACES};
             uniform vec2 u_leftEyes[MAX_FACES];   
             uniform vec2 u_rightEyes[MAX_FACES];  
             uniform vec2 u_mouths[MAX_FACES];
-            uniform float u_mouthsOpen[MAX_FACES]; //
-            uniform int u_faceCount;  //
+            uniform float u_mouthsOpen[MAX_FACES];
+            uniform int u_faceCount;
             
             varying vec2 vUv;
 
@@ -163,19 +161,19 @@
                 origin.y = (0.4 + 0.4*rand(currentPeriod));
 
                 vec3 color = vec3(0.0);
-                for(int i=0; i < NUM_SPARKS; i++) {
-                    float fi = float(i);
+                for(int j=0; j < NUM_SPARKS; j++) {
+                    float fj = float(j);
                     vec2 velocity;
-                    velocity.x = 0.5*(rand(currentPeriod+fi*0.4)-0.5);
-                    velocity.y = 0.5*(rand(currentPeriod+fi*0.5)-0.5);
+                    velocity.x = 0.5*(rand(currentPeriod+fj*0.4)-0.5);
+                    velocity.y = 0.5*(rand(currentPeriod+fj*0.5)-0.5);
                     velocity = normalize(velocity);
-                    velocity *= 0.2 + rand(currentPeriod+fi*0.6) * 0.3;
+                    velocity *= 0.2 + rand(currentPeriod+fj*0.6) * 0.3;
                     
                     vec3 sparkColor;
-                    sparkColor.r = 0.3+0.7*rand(currentPeriod+fi*0.1);
-                    sparkColor.g = 0.3+0.7*rand(currentPeriod+fi*0.2);
-                    sparkColor.b = 0.3+0.7*rand(currentPeriod+fi*0.3);
-                    color += spark(coord, origin, sparkColor, velocity, periodTime, fi);
+                    sparkColor.r = 0.3+0.7*rand(currentPeriod+fj*0.1);
+                    sparkColor.g = 0.3+0.7*rand(currentPeriod+fj*0.2);
+                    sparkColor.b = 0.3+0.7*rand(currentPeriod+fj*0.3);
+                    color += spark(coord, origin, sparkColor, velocity, periodTime, fj);
                 }
                 return color;
             }
@@ -230,14 +228,14 @@
                     float flasht = t2fb * (step(0.0, t2fb) - step(0.1, t2fb)) * 10.;
                     vec3 col = colorRibbon(hash1(ja + t1)); 
                     
-                    for(float i=0.; i<imax; i++){ 
-                        float ia = i/imax;
+                    for(float k=0.; k<imax; k++){ 
+                        float ia = k/imax;
                         float randOffset = (hash1(ia + t1) - 0.5) * 0.2;
                         
                         vec2 heartOffset = getHeartPosition(ia * TWO_PI + randOffset) * t2fb * -0.045; 
                         vec2 layer2_pos = center + heartOffset;
                         
-                        float blink = step(1., mod(i, 2.)); 
+                        float blink = step(1., mod(k, 2.)); 
                         float sdf = star5SDF((scaled_uv - layer2_pos) * 1.2, 0.05, 0.09) + 0.05;
                         float fade = 1.0 - pow(t2fb, 2.0); 
                         
@@ -271,15 +269,13 @@
                 vec2 dirFromCenter = vUv - screenCenter;
                 float distFromCenter = length(dirFromCenter);
 
-                // ==========================================
                 // 1. 相機底圖處理 (保留放射狀模糊)
-                // ==========================================
                 vec3 cameraCol = vec3(0.0);
                 float blurStrength = smoothstep(0.2, 0.8, distFromCenter) * 0.40; 
                 
                 const int SAMPLES = 24;
-                for (int i = 0; i < SAMPLES; i++) {
-                    float t_blur = (float(i) / float(SAMPLES - 1)) - 0.5;
+                for (int s = 0; s < SAMPLES; s++) {
+                    float t_blur = (float(s) / float(SAMPLES - 1)) - 0.5;
                     vec2 sampleUV = vUv + dirFromCenter * (t_blur * blurStrength);
                     
                     vec2 camUv = sampleUV;
@@ -298,31 +294,25 @@
                 
                 // 相機畫面壓暗，凸顯煙火高光
                 cameraCol *= 0.55;
-                
                 vec3 finalCol = cameraCol;
 
-                // ==========================================
-                // 2. 融入背景煙火 (降低頻率與數量)
-                // ==========================================
+                // 2. 融入背景煙火
                 vec2 fwCoord = gl_FragCoord.xy / iResolution.y;
                 vec3 fwColor = vec3(0.0);
                 
-                for(int i=0; i < NUM_FIREWORKS; i++) {
-                    float fi = float(i);
-                    float timeOffset = Period / float(NUM_FIREWORKS) * (0.5 + rand(fi));
-                    float time = iTime + fi*timeOffset;
+                for(int f=0; f < NUM_FIREWORKS; f++) {
+                    float ff = float(f);
+                    float timeOffset = Period / float(NUM_FIREWORKS) * (0.5 + rand(ff));
+                    float time = iTime + ff*timeOffset;
                     float periodTime = mod(time, Period);
-                    float periodOffset = fi * 10.0; 
+                    float periodOffset = ff * 10.0; 
                     float currentPeriod = floor(time/Period + periodOffset);
                     
                     fwColor += firework(fwCoord, currentPeriod, periodTime);
                 }
-                // 將背景煙火以發光模式疊加
                 finalCol = clamp(finalCol + fwColor, 0.0, 1.0);
 
-                // ==========================================
-                // 3. 愛心煙火噴發特效 (視覺焦點)
-                // ==========================================
+                // 3. 愛心煙火噴發特效 (多張臉部特徵)
                 vec2 uv = gl_FragCoord.xy / iResolution.xy;
                 uv.x -= 0.5;
                 uv.x *= screenAspect;
@@ -331,33 +321,31 @@
                 vec2 scaled_uv = uv * 2.0;
                 vec3 faceFX = vec3(0.0);
                 
-                // --- 修改：遍歷所有偵測到的臉 ---
-                for (int i = 0; i < MAX_FACES; i++) {
-                    if (i >= u_faceCount) break; // 超過實際偵測人數則停止
+                // 遍歷所有偵測到的臉
+                for (int idx = 0; idx < MAX_FACES; idx++) {
+                    if (idx >= u_faceCount) break;
 
                     // 眼睛煙火
-                    vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyes.x, u_leftEyes.y), screenAspect, videoAspect);
-                    vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyes.x, u_rightEyes.y), screenAspect, videoAspect);
+                    vec2 leftEye = transformCoordinates(vec2(1.0 - u_leftEyes[idx].x, u_leftEyes[idx].y), screenAspect, videoAspect);
+                    vec2 rightEye = transformCoordinates(vec2(1.0 - u_rightEyes[idx].x, u_rightEyes[idx].y), screenAspect, videoAspect);
                     
                     vec2 scaled_leftEye = leftEye * 2.0;
                     vec2 scaled_rightEye = rightEye * 2.0;
                     
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(i) * 0.1);
-                    faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(i) * 0.1 + 0.5);
+                    faceFX += renderHeartFireworks(scaled_uv, scaled_leftEye, float(idx) * 0.1);
+                    faceFX += renderHeartFireworks(scaled_uv, scaled_rightEye, float(idx) * 0.1 + 0.5);
 
                     // 嘴巴煙火 (如果張開)
-                    if (u_mouthsOpen > 0.5) {
-                        vec2 mouth = transformCoordinates(vec2(1.0 - u_mouths.x, u_mouths.y), screenAspect, videoAspect);
+                    if (u_mouthsOpen[idx] > 0.5) {
+                        vec2 mouth = transformCoordinates(vec2(1.0 - u_mouths[idx].x, u_mouths[idx].y), screenAspect, videoAspect);
                         vec2 scaled_mouth = mouth * 2.0;
-                        faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(cite: i) * 0.1 + 0.25); 
+                        faceFX += renderHeartFireworks(scaled_uv, scaled_mouth, float(idx) * 0.1 + 0.25); 
                     }
                 }
                 
                 finalCol = clamp(finalCol + faceFX, 0.0, 1.0);
                 
-                // ==========================================
                 // 4. 全局畫面暗角 (Vignette)
-                // ==========================================
                 float vignette = smoothstep(0.75, 0.25, distFromCenter);
                 finalCol *= mix(0.3, 1.0, vignette);
 
@@ -379,17 +367,16 @@
             cameraTexture.minFilter = THREE.LinearFilter;
             cameraTexture.magFilter = THREE.LinearFilter;
 
-            // --- 修改：更新 Uniforms 結構以匹配 Shader ---
             const uniforms = {
                 u_cameraTexture: { value: cameraTexture },
                 iResolution: { value: new THREE.Vector2(width, height) },
                 u_videoResolution: { value: new THREE.Vector2(1280, 720) }, 
                 iTime: { value: 0 },
-                u_leftEyes: { value: leftEyesRaw }, //
-                u_rightEyes: { value: rightEyesRaw }, //
-                u_mouths: { value: mouthsRaw }, //
-                u_mouthsOpen: { value: mouthsOpen }, //
-                u_faceCount: { value: 0 } //
+                u_leftEyes: { value: leftEyesRaw },
+                u_rightEyes: { value: rightEyesRaw },
+                u_mouths: { value: mouthsRaw },
+                u_mouthsOpen: { value: mouthsOpen },
+                u_faceCount: { value: 0 }
             };
 
             material = new THREE.ShaderMaterial({
@@ -417,12 +404,12 @@
             requestAnimationFrame(animate);
             material.uniforms.iTime.value = timestamp / 1000.0;
             
-            // --- 修改：在每一幀更新所有臉部的數據 ---
-            material.uniforms.u_leftEyes.value = leftEyesRaw; //
-            material.uniforms.u_rightEyes.value = rightEyesRaw; //
-            material.uniforms.u_mouths.value = mouthsRaw; //
-            material.uniforms.u_mouthsOpen.value = mouthsOpen; //
-            material.uniforms.u_faceCount.value = faceCount; //
+            // 更新陣列 Uniforms
+            material.uniforms.u_leftEyes.value = leftEyesRaw;
+            material.uniforms.u_rightEyes.value = rightEyesRaw;
+            material.uniforms.u_mouths.value = mouthsRaw;
+            material.uniforms.u_mouthsOpen.value = mouthsOpen;
+            material.uniforms.u_faceCount.value = faceCount;
             
             if (videoElement.videoWidth) {
                 material.uniforms.u_videoResolution.value.set(videoElement.videoWidth, videoElement.videoHeight);
@@ -432,59 +419,60 @@
         }
 
         const faceMesh = new FaceMesh({
-            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${cite: file}`
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
         });
 
-        // --- 修改：設置 maxNumFaces 為 MAX_FACES (2) ---
         faceMesh.setOptions({
-            maxNumFaces: MAX_FACES, //
+            maxNumFaces: MAX_FACES,
             refineLandmarks: true,
             minDetectionConfidence: 0.5,
             minTrackingConfidence: 0.5
         });
 
-        // 嘴巴張開的距離閾值 (根據實際情況微調)
-        const MOUTH_OPEN_THRESHOLD = 0.05; 
+        // 嘴巴張開的距離閾值 (可調整)
+        const MOUTH_OPEN_THRESHOLD = 0.035; 
 
-        // --- 修改：處理多張臉和嘴巴數據 ---
         faceMesh.onResults(results => {
             faceCount = 0;
-            // 重置數據
-            mouthsOpen.fill(0.0); //
+            mouthsOpen.fill(0.0); // 每幀重置嘴巴狀態
 
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
-                faceCount = Math.min(results.multiFaceLandmarks.length, MAX_FACES); //
+                faceCount = Math.min(results.multiFaceLandmarks.length, MAX_FACES);
 
-                for (let i = 0; i < faceCount; i++) {
-                    const landmarks = results.multiFaceLandmarks[i]; //
+                for (let idx = 0; idx < faceCount; idx++) {
+                    const landmarks = results.multiFaceLandmarks[idx];
                     
-                    // 眼睛 LandMarks (虹膜中心)
-                    const leftEye = landmarks; //
-                    const rightEye = landmarks; //
-                    leftEyesRaw.set(leftEye.x, leftEye.y); //
-                    rightEyesRaw.set(rightEye.x, rightEye.y); //
+                    // 眼睛 LandMarks (左眼 468, 右眼 473)
+                    const leftEye = landmarks[468];
+                    const rightEye = landmarks[473];
+                    
+                    if (leftEye && rightEye) {
+                        leftEyesRaw[idx].set(leftEye.x, leftEye.y);
+                        rightEyesRaw[idx].set(rightEye.x, rightEye.y);
+                    }
 
-                    // 嘴巴 LandMarks
-                    // 13: 上嘴唇內側中心, 14: 下嘴唇內側中心
-                    const upperLipInner = landmarks;
-                    const lowerLipInner = landmarks;
+                    // 嘴巴 LandMarks (13: 上嘴唇內側中心, 14: 下嘴唇內側中心)
+                    const upperLipInner = landmarks[13];
+                    const lowerLipInner = landmarks[14];
 
-                    // 計算嘴巴中心位置
-                    mouthsRaw.set(
-                        (upperLipInner.x + lowerLipInner.x) / 2.0,
-                        (upperLipInner.y + lowerLipInner.y) / 2.0
-                    );
+                    if (upperLipInner && lowerLipInner) {
+                        // 計算嘴巴中心位置
+                        mouthsRaw[idx].set(
+                            (upperLipInner.x + lowerLipInner.x) / 2.0,
+                            (upperLipInner.y + lowerLipInner.y) / 2.0
+                        );
 
-                    // 計算嘴巴張開距離 (使用歐幾里得距離)
-                    const mouthDistance = Math.sqrt(
-                        Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
-                        Math.pow(upperLipInner.y - lowerLipInner.y, 2) +
-                        Math.pow(upperLipInner.z - lowerLipInner.z, 2)
-                    );
+                        // 計算嘴巴張開距離
+                        const mouthDistance = Math.sqrt(
+                            Math.pow(upperLipInner.x - lowerLipInner.x, 2) +
+                            Math.pow(upperLipInner.y - lowerLipInner.y, 2) +
+                            Math.pow(upperLipInner.z - lowerLipInner.z, 2)
+                        );
 
-                    // 判斷嘴巴是否張開
-                    if (mouthDistance > MOUTH_OPEN_THRESHOLD) {
-                        mouthsOpen = 1.0; 
+                        // 判斷是否張開
+                        if (mouthDistance > MOUTH_OPEN_THRESHOLD) {
+                            mouthsOpen[idx] = 1.0; 
+                        }
                     }
                 }
             }
@@ -498,23 +486,19 @@
             height: 720
         });
 
-        // --- 攔截自動播放，改為點擊啟動 ---
         let isStarted = false;
         
         startBtn.addEventListener('click', () => {
             if (isStarted) return;
             isStarted = true;
             
-            // 點擊後隱藏開始畫面，露出後方的 WebGL 畫布
             startScreen.style.display = 'none';
 
-            // 啟動 WebGL 與相機權限
             initWebGL();
             cameraUtils.start().catch(err => {
                 console.error("相機啟動失敗：", err);
                 alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
                 
-                // 如果失敗了，把開始畫面顯示回來
                 startScreen.style.display = 'flex'; 
                 isStarted = false;
             });
