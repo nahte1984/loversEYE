@@ -2,27 +2,27 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>whenever i see u | v9.3.4</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>whenever i see u | v9.4</title>
     <style>
-        body {
+        /* --- 修正：鎖定全螢幕，防止 Safari 動態網址列推擠畫面 --- */
+        html, body {
             margin: 0;
             padding: 0;
             background-color: #000;
             overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            width: 100vw;
+            position: fixed; /* 關鍵：鎖定整個頁面，禁止滾動與推擠 */
+            width: 100%;
+            height: 100%;
         }
 
         #webgl-canvas {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw;
-            height: 100vh;
+            width: 100%; /* 改用 100% 而非 100vw */
+            height: 100%; /* 改用 100% 而非 100vh */
+            display: block; /* 關鍵：消除 canvas 預設底部的 inline 空隙 */
             z-index: 10;
         }
 
@@ -39,8 +39,8 @@
             position: absolute;
             top: 0;
             left: 0;
-            width: 100vw;
-            height: 100vh;
+            width: 100%; /* 改用 100% */
+            height: 100%; /* 改用 100% */
             background-color: #000;
             z-index: 20;
             display: flex;
@@ -394,6 +394,7 @@
         }
 
         function onWindowResize() {
+            // Three.js 會根據 window.innerHeight 重新繪製，而 CSS 已經鎖定，就不會再被拉扯
             const width = window.innerWidth;
             const height = window.innerHeight;
             renderer.setSize(width, height);
@@ -496,8 +497,8 @@
 
             initWebGL();
             cameraUtils.start().catch(err => {
-                console.error("相機啟動失敗：", err);
-                alert("無法啟動相機，請確認您的裝置是否允許相機存取權限。");
+                console.error("Camera failed to start.", err);
+                alert("Please check your device settings to ensure camera access is enabled.");
                 
                 startScreen.style.display = 'flex'; 
                 isStarted = false;
